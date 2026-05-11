@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ====== DESIGN TOKENS ======
+   Default = "arena" theme. The theme switcher (see lib/themes.js) overwrites
+   these on :root at runtime, so every Tailwind semantic color follows along. */
+:root {
+  --bg: #f7f5f0;
+  --surface: #ffffff;
+  --surface-2: #fbfaf6;
+  --ink: #15140f;
+  --ink-2: #3a3833;
+  --muted: #7a766c;
+  --muted-2: #a8a39a;
+  --border: #e5e2dc;
+  --border-strong: #d2cec5;
+  --accent: #c24a22;
+  --accent-soft: #f5e6de;
+  --warn: #b8801c;
+  --warn-soft: #f4ecd8;
+  --info: #2a4a8f;
+  --info-soft: #e1e8f4;
+  --danger: #a8321f;
+  --danger-soft: #f3e0da;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Geist", ui-sans-serif, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  #root {
+    min-height: 100vh;
+  }
+  button {
+    font-family: inherit;
+  }
+  input,
+  textarea,
+  select {
+    font-family: inherit;
+    color: inherit;
+  }
+  ::selection {
+    background: var(--accent);
+    color: #fff;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 0;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* ====== ANIMATIONS ======
+   Keyframes declared here, not in tailwind.config.js: Tailwind only emits a
+   @keyframes block when one of its generated `animation-*` utilities references
+   it. These `.anim-*` classes are hand-written, so Tailwind never sees the
+   usage and would drop the keyframes. Declaring them directly guarantees they
+   ship — same as the original prototype's index.html. */
+@keyframes m-fade-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes m-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes m-rise-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes m-rise-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(12px) scale(0.985); }
+}
+@keyframes m-slide-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes m-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@keyframes m-spin  { to { transform: rotate(360deg); } }
+
+@layer components {
+  .mono {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-feature-settings: "zero", "ss01";
+  }
+
+  /* Named animation classes — match the original prototype so component
+     markup ports over unchanged. */
+  .anim-fade-in  { animation: m-fade-in 180ms ease-out both; }
+  .anim-fade-out { animation: m-fade-out 160ms ease-in both; }
+  .anim-rise-in  { animation: m-rise-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .anim-rise-out { animation: m-rise-out 180ms cubic-bezier(0.6, 0.05, 0.95, 0.3) both; }
+  .anim-slide-in { animation: m-slide-in 200ms ease-out both; }
+  .route-enter   { animation: m-slide-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .pulse         { animation: m-pulse 1.6s ease-in-out infinite; }
+  .spin          { animation: m-spin 0.9s linear infinite; }
+}
