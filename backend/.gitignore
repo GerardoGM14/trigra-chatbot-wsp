@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+logs/
+
+# Baileys auth (cada sesión genera credenciales que NO van al repo)
+baileys-auth/
+
+# Uploads de campañas (imágenes/videos/CSVs subidos)
+uploads/
+
+# Prisma SQLite (si llegamos a usarlo en algún momento)
+prisma/*.db
+prisma/*.db-journal
+
+.DS_Store
