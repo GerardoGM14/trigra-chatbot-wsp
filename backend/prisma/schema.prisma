@@ -1,0 +1,280 @@
+// Schema Prisma para WSP Control.
+// Convenciones:
+//   · IDs internos: cuid()    (cortos, ordenables, k-safe)
+//   · IDs públicos: campo `slug` cuando hace falta exponer algo human-readable
+//   · Enums para roles/estados/niveles → consistencia con el frontend
+//   · created/updated en todos los modelos persistentes
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ USUARIOS ============
+enum UserRole {
+  Operador
+  Supervisor
+  Administrador
+}
+
+enum UserStatus {
+  Activo
+  Suspendido
+  Invitado
+}
+
+model User {
+  id           String     @id @default(cuid())
+  // Slug corto para mostrar como @username en logs/UI (maria.q, lucia.r).
+  username     String     @unique
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         UserRole   @default(Operador)
+  status       UserStatus @default(Activo)
+  lastSeen     DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  campaigns Campaign[]          @relation("CampaignOwner")
+  sessions  SessionAssignment[]
+  activity  ActivityLog[]
+
+  @@index([status])
+  @@index([role])
+}
+
+// ============ SESIONES BAILEYS ============
+enum SessionStatus {
+  Conectado
+  Reconectando
+  Desconectado
+}
+
+model BaileysSession {
+  id              String        @id @default(cuid())
+  // ID legible que se usa en logs y la UI: session_01, session_02…
+  slug            String        @unique
+  phoneNumber     String        @unique
+  status          SessionStatus @default(Desconectado)
+  quality         String? // "Alta" | "Media" | "Baja" | "—"
+  platform        String? // "Android" | "iOS"
+  exclusive       Boolean       @default(false)
+  exclusiveUserId String? // si exclusive=true, el operador con acceso único
+  connectedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  assignments SessionAssignment[]
+  campaigns   Campaign[]
+
+  @@index([status])
+}
+
+// Tabla puente N:M entre sesiones y operadores (modo compartido).
+model SessionAssignment {
+  sessionId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  session BaileysSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, userId])
+}
+
+// ============ GRUPOS Y CONTACTOS ============
+model ContactGroup {
+  id        String   @id @default(cuid())
+  slug      String   @unique // grp_clientes_a, grp_vip, ...
+  name      String
+  tag       String // "Clientes" | "VIP" | "Leads" | ...
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts       Contact[]
+  campaignGroups CampaignGroup[]
+
+  @@index([tag])
+}
+
+model Contact {
+  id        String   @id @default(cuid())
+  phone     String // E.164: +51998412003
+  name      String?
+  tags      String[] // ["VIP", "Lima"] - Postgres arrays nativos
+  optedOut  Boolean  @default(false)
+  groupId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  group ContactGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, phone]) // un número puede repetirse entre grupos, no dentro
+  @@index([phone])
+}
+
+// ============ PLANTILLAS ============
+enum TemplateType {
+  Texto
+  Lista
+  Botones
+  Media
+}
+
+model Template {
+  id        String       @id @default(cuid())
+  slug      String       @unique // tpl_horarios, tpl_pago, ...
+  name      String
+  type      TemplateType
+  body      String       @db.Text
+  // items y meta variables se guardan como JSON para flexibilidad
+  // (opciones de lista, botones, variables disponibles).
+  items     Json? // [{title, desc}] o [{label, action}]
+  usedCount Int          @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  campaigns Campaign[]
+
+  @@index([type])
+}
+
+// ============ CAMPAÑAS ============
+enum CampaignStatus {
+  Borrador
+  Programada
+  Enviando
+  Pausada
+  Completada
+  Archivada
+}
+
+enum CampaignType {
+  Texto
+  Imagen
+  Video
+  Documento
+  Lista
+  Botones
+}
+
+model Campaign {
+  id            String         @id @default(cuid())
+  slug          String         @unique // camp_8821, camp_8820, ...
+  name          String
+  status        CampaignStatus @default(Borrador)
+  type          CampaignType
+  body          String         @db.Text
+  // Mismo shape que Template.items - duplicamos al "snapshot" para que cambios
+  // posteriores en la plantilla NO afecten campañas ya enviadas.
+  items         Json?
+  // Programación
+  scheduledAt   DateTime?
+  recurringRule String? // formato RRULE de iCalendar para recurrentes
+  // Estado de envío
+  total         Int            @default(0)
+  sent          Int            @default(0)
+  failed        Int            @default(0)
+  progress      Int            @default(0) // 0..100
+
+  ownerId    String
+  templateId String? // si arrancó desde una plantilla
+  sessionId  String? // sesión Baileys asignada al envío
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  owner    User            @relation("CampaignOwner", fields: [ownerId], references: [id])
+  template Template?       @relation(fields: [templateId], references: [id])
+  session  BaileysSession? @relation(fields: [sessionId], references: [id])
+  groups   CampaignGroup[]
+  sendJobs SendJob[]
+
+  @@index([status])
+  @@index([ownerId])
+  @@index([scheduledAt])
+}
+
+// Audiencia de la campaña: muchos grupos por campaña.
+model CampaignGroup {
+  campaignId String
+  groupId    String
+
+  campaign Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  group    ContactGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([campaignId, groupId])
+}
+
+// ============ TRABAJOS DE ENVÍO ============
+// Cada mensaje individual a un contacto es un SendJob. BullMQ los procesa
+// con rate limit. Esto nos da reintentos y auditoría a nivel mensaje.
+enum SendJobStatus {
+  Pendiente
+  Enviado
+  Fallido
+}
+
+model SendJob {
+  id           String        @id @default(cuid())
+  campaignId   String
+  phone        String // snapshot del número (los contactos pueden moverse)
+  status       SendJobStatus @default(Pendiente)
+  attempts     Int           @default(0)
+  errorCode    String?
+  errorMessage String?
+  sentAt       DateTime?
+  createdAt    DateTime      @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status])
+  @@index([phone])
+}
+
+// ============ AUDITORÍA ============
+enum LogLevel {
+  ok
+  info
+  warn
+  err
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  // Acción namespaceada: campaign.send, contact.import, baileys.qr, auth.failed
+  action    String
+  // Referencia opcional al recurso afectado (slug, no FK rígido).
+  target    String?
+  detail    String?
+  level     LogLevel @default(info)
+  // Si la acción la hizo un usuario, lo enlazamos. system actions van con null.
+  userId    String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([level])
+  @@index([userId])
+}
+
+// ============ POLÍTICAS GLOBALES ============
+// Singleton (siempre 1 fila). Cambia las políticas que vienen del .env y se
+// pueden sobreescribir desde AdminSettings.
+model AccountPolicy {
+  id                 String   @id @default(cuid())
+  maxRatePerMinute   Int      @default(60)
+  pauseMinSeconds    Int      @default(2)
+  pauseMaxSeconds    Int      @default(6)
+  scheduleWindow     String   @default("Lun–Sáb · 08:00 – 20:00 (UTC−5)")
+  lockoutAttempts    Int      @default(5)
+  lockoutMinutes     Int      @default(30)
+  passwordMaxAgeDays Int      @default(90)
+  twoFactorRequired  Boolean  @default(true)
+  updatedAt          DateTime @updatedAt
+}
