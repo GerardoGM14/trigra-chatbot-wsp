@@ -6,8 +6,8 @@ Platform for managing bulk WhatsApp campaigns with multiple sessions (Baileys), 
 
 ```
 app-chatbot/
-├── frontend/   ← React + Vite + Tailwind   (web panel)
-└── backend/    ← Fastify + Postgres + Redis (pending)
+├── frontend/   ← React + Vite + Tailwind         (web panel)
+└── backend/    ← Fastify + Prisma + BullMQ + IO  (REST API + queues + realtime)
 ```
 
 ## Current status
@@ -15,10 +15,14 @@ app-chatbot/
 | Module | Status |
 |---|---|
 | Frontend | ✅ Working with mock data — see [`frontend/README.md`](frontend/README.md) |
-| Backend | ⏳ Pending |
+| Backend | ✅ Scaffolded with REST API + queues — see [`backend/README.md`](backend/README.md) |
+| Baileys (WhatsApp) | ⏳ Module structure ready, real connection pending |
+| Frontend ↔ Backend | ⏳ Wiring pending — both run in isolation today |
 | Deployment | ⏳ Firebase Hosting (frontend) + VPS (backend) |
 
-## Running the frontend
+## Running locally
+
+**Frontend** (mock data, no backend needed):
 
 ```bash
 cd frontend
@@ -26,7 +30,19 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-More details, architecture and diagrams in [`frontend/README.md`](frontend/README.md).
+**Backend** (requires Docker for Postgres + Redis):
+
+```bash
+cd backend
+cp .env.example .env
+docker compose up -d
+npm install
+npm run prisma:migrate
+npm run db:seed
+npm run dev          # http://localhost:3001
+```
+
+More details, architecture and diagrams in each module's README.
 
 ## License
 
