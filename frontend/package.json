@@ -7,9 +7,12 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && cd .. && firebase deploy --only hosting",
+    "deploy:preview": "npm run build && cd .. && firebase hosting:channel:deploy preview"
   },
   "dependencies": {
+    "firebase": "^12.13.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.15.1"
