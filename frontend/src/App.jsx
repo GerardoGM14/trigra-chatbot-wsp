@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { AuthProvider, useAuth } from "./lib/auth.jsx";
 import { ToastProvider } from "./lib/toast.jsx";
 import { useTheme } from "./hooks/useTheme.js";
+import { useAnalytics } from "./hooks/useAnalytics.js";
 import { Shell } from "./components/shell";
 import { ThemePicker } from "./components/ThemePicker.jsx";
 import { LoginScreen } from "./screens/auth/LoginScreen.jsx";
@@ -29,6 +30,9 @@ function RequireRole({ role, children }) {
 
 function AppRoutes() {
   const { user } = useAuth();
+  // Dispara page_view en cada cambio de ruta. Solo activa en producción; en
+  // dev el track interno descarta los eventos.
+  useAnalytics();
   return (
     <Routes>
       <Route path="/login" element={<LoginScreen />} />
