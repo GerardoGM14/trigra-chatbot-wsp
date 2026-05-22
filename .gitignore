@@ -46,3 +46,8 @@ coverage/
 backend/uploads/
 backend/baileys-auth/
 backend/prisma/migrations/dev.db
+
+# Firebase CLI
+.firebase/
+firebase-debug.log
+firestore-debug.log
