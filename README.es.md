@@ -18,7 +18,8 @@ app-chatbot/
 | Backend | ✅ Scaffold con API REST + colas — ver [`backend/README.es.md`](backend/README.es.md) |
 | Baileys (WhatsApp) | ⏳ Estructura lista, conexión real pendiente |
 | Frontend ↔ Backend | ⏳ Integración pendiente — hoy corren por separado |
-| Despliegue | ⏳ Firebase Hosting (frontend) + VPS (backend) |
+| Firebase Hosting | ✅ Configurado — `cd frontend && npm run deploy` |
+| Despliegue VPS | ⏳ Pendiente |
 
 ## Cómo arrancar en local
 

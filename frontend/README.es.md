@@ -325,22 +325,76 @@ npm run preview      # sirve el build localmente
 npm run lint         # ESLint
 ```
 
-### Variables de entorno (cuando aterrice el backend)
+### Variables de entorno
+
+Copia `.env.example` a `.env.local` y rellena los valores. **`.env.local` está git-ignored** — guarda allí tus claves reales.
 
 ```bash
 # frontend/.env.local
-VITE_API_URL=https://api.tudominio.com
-VITE_WS_URL=wss://api.tudominio.com
+
+# Backend (cuando se conecte)
+VITE_API_URL=http://localhost:3001
+VITE_WS_URL=ws://localhost:3001
+
+# Firebase (Hosting + Analytics)
+# Sácalos de Firebase Console → Project Settings → Web app SDK.
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_STORAGE_BUCKET=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
+VITE_FIREBASE_MEASUREMENT_ID=    # opcional, solo si activaste Analytics
 ```
+
+Las claves Firebase Web son **públicas por diseño** — viajan en el JS que se entrega al navegador. La protección viene de los "Authorized domains" y las reglas de seguridad, no del secreto de la clave.
 
 ---
 
-## Despliegue planeado
+## Despliegue — Firebase Hosting
+
+El frontend está configurado para desplegarse a Firebase Hosting desde la raíz del repo.
+
+### Setup inicial (una sola vez)
+
+```bash
+# Instala el CLI globalmente
+npm install -g firebase-tools
+
+# Autentica (abre el navegador)
+firebase login
+```
+
+### Desplegar
+
+```bash
+cd frontend
+npm run deploy
+```
+
+El script:
+1. Corre `vite build` → genera `frontend/dist/`
+2. Llama a `firebase deploy --only hosting` desde la raíz del repo, donde vive `firebase.json`
+3. Sube `dist/` a Firebase Hosting
+
+El sitio aterriza en `https://trigra-chatbot-wsp.web.app` (y en un dominio propio cuando configures uno).
+
+### Canal de preview
+
+Para una URL temporal (útil para compartir avances sin tocar producción):
+
+```bash
+npm run deploy:preview
+# Devuelve una URL única tipo https://trigra-chatbot-wsp--preview-xyz.web.app
+```
+
+### Arquitectura
 
 ```
 ┌──────────────────────────────────────────────┐
 │           Firebase Hosting                   │
 │  (frontend build estático: frontend/dist/)   │
+│  + Firebase Analytics (solo en producción)   │
 └──────────────────────┬───────────────────────┘
                        │ HTTPS  →  fetch / WebSocket
                        ▼
@@ -352,3 +406,12 @@ VITE_WS_URL=wss://api.tudominio.com
 ```
 
 El frontend es 100% estático y agnóstico al backend; cualquier API que respete el shape de `lib/data.js` lo enchufa.
+
+### Firebase Analytics
+
+Analytics se inicializa **solo en producción** (`MODE === "production"`) y **solo si el navegador lo soporta** (algunos bloqueadores de privacidad deshabilitan gtag). Los page_view se disparan en cada cambio de ruta vía el hook `useAnalytics()`. Para tracking de eventos custom, importa `trackEvent` desde `lib/firebase.js`:
+
+```js
+import { trackEvent } from "./lib/firebase.js";
+trackEvent("campaign_launched", { id: campaign.id });
+```

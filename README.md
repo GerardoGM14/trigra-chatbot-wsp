@@ -18,7 +18,8 @@ app-chatbot/
 | Backend | ✅ Scaffolded with REST API + queues — see [`backend/README.md`](backend/README.md) |
 | Baileys (WhatsApp) | ⏳ Module structure ready, real connection pending |
 | Frontend ↔ Backend | ⏳ Wiring pending — both run in isolation today |
-| Deployment | ⏳ Firebase Hosting (frontend) + VPS (backend) |
+| Firebase Hosting | ✅ Configured — `cd frontend && npm run deploy` |
+| VPS deployment | ⏳ Pending |
 
 ## Running locally
 
