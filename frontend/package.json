@@ -12,10 +12,12 @@
     "deploy:preview": "npm run build && cd .. && firebase hosting:channel:deploy preview"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.100.10",
     "firebase": "^12.13.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router-dom": "^7.15.1"
+    "react-router-dom": "^7.15.1",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
