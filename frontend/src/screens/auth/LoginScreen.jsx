@@ -7,10 +7,11 @@ import { Logo } from "../../components/Logo.jsx";
 import { I } from "../../components/Icons.jsx";
 import { useAuth } from "../../lib/auth.jsx";
 import { useToast } from "../../lib/toast.jsx";
+import { ApiError } from "../../lib/apiClient.js";
 import { ForgotPasswordModal } from "../../modals";
 
-// Login mock: the "Demo · Entrar como" toggle picks which role to log in as.
-// The form fields are pre-populated so the demo opens in one click.
+// Login real contra /auth/login del backend. El JWT se guarda en localStorage
+// vía AuthContext y las pantallas protegidas re-renderizan automáticamente.
 
 const STATS = [
   { k: "Sesiones activas", v: "3 / 3" },
@@ -23,13 +24,23 @@ export function LoginScreen() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [username, setUsername] = useState("admin");
-  const [pw, setPw] = useState("••••••••••");
-  const [as, setAs] = useState("admin");
+  const [pw, setPw] = useState("demo1234");
+  const [submitting, setSubmitting] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
 
-  const onLogin = () => {
-    login(as);
-    navigate(as === "admin" ? "/a" : "/u");
+  const onLogin = async (e) => {
+    e?.preventDefault();
+    if (submitting || !username || !pw) return;
+    setSubmitting(true);
+    try {
+      const user = await login(username, pw);
+      navigate(user.role === "admin" ? "/a" : "/u", { replace: true });
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : "No se pudo iniciar sesión";
+      toast.err(msg);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -38,7 +49,7 @@ export function LoginScreen() {
       <FormPanel
         username={username} setUsername={setUsername}
         pw={pw} setPw={setPw}
-        as={as} setAs={setAs}
+        submitting={submitting}
         onLogin={onLogin}
         onForgot={() => setForgotOpen(true)}
       />
@@ -46,7 +57,7 @@ export function LoginScreen() {
       {forgotOpen && (
         <ForgotPasswordModal
           onClose={() => setForgotOpen(false)}
-          onSubmit={(email) => toast.ok(`Enviamos instrucciones a ${email}.`)}
+          onSubmit={(email) => toast.ok(`Si ${email} existe, recibirá instrucciones.`)}
         />
       )}
     </div>
@@ -88,10 +99,10 @@ function BrandPanel() {
   );
 }
 
-function FormPanel({ username, setUsername, pw, setPw, as, setAs, onLogin, onForgot }) {
+function FormPanel({ username, setUsername, pw, setPw, submitting, onLogin, onForgot }) {
   return (
     <div className="flex flex-col justify-center" style={{ padding: "48px 56px", background: "var(--surface)" }}>
-      <div style={{ maxWidth: 380, width: "100%", margin: "0 auto" }}>
+      <form onSubmit={onLogin} style={{ maxWidth: 380, width: "100%", margin: "0 auto" }}>
         <div className="text-[11px] font-medium uppercase text-muted" style={{ letterSpacing: "0.06em" }}>
           Acceso · panel interno
         </div>
@@ -101,16 +112,29 @@ function FormPanel({ username, setUsername, pw, setPw, as, setAs, onLogin, onFor
 
         <div className="grid gap-3.5">
           <Field label="Usuario">
-            <Input value={username} onChange={(e) => setUsername(e.target.value)} icon={<I.user1 size={14} />} />
+            <Input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              icon={<I.user1 size={14} />}
+            />
           </Field>
           <Field label="Contraseña">
-            <Input value={pw} onChange={(e) => setPw(e.target.value)} type="password" icon={<I.shield size={14} />} />
+            <Input
+              value={pw}
+              onChange={(e) => setPw(e.target.value)}
+              type="password"
+              icon={<I.shield size={14} />}
+            />
           </Field>
 
-          <RolePicker as={as} setAs={setAs} />
-
-          <Button variant="accent" size="lg" onClick={onLogin} style={{ width: "100%", justifyContent: "center" }}>
-            Entrar →
+          <Button
+            type="submit"
+            variant="accent"
+            size="lg"
+            disabled={submitting || !username || !pw}
+            style={{ width: "100%", justifyContent: "center" }}
+          >
+            {submitting ? "Entrando…" : "Entrar →"}
           </Button>
 
           <div className="flex justify-between text-xs text-muted">
@@ -125,37 +149,7 @@ function FormPanel({ username, setUsername, pw, setPw, as, setAs, onLogin, onFor
             <span>Soporte · TI</span>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function RolePicker({ as, setAs }) {
-  return (
-    <div style={{ padding: "10px 12px", background: "var(--surface-2)", border: "1px dashed var(--border-strong)" }}>
-      <div className="text-[11px] text-muted uppercase" style={{ letterSpacing: "0.04em", marginBottom: 6 }}>
-        Demo · Entrar como
-      </div>
-      <div className="flex gap-1.5">
-        {[
-          { k: "admin", l: "Administrador" },
-          { k: "user", l: "Operador" },
-        ].map((o) => (
-          <button
-            key={o.k}
-            onClick={() => setAs(o.k)}
-            className="flex-1 text-xs font-medium cursor-pointer"
-            style={{
-              padding: "8px 10px",
-              border: `1px solid ${as === o.k ? "var(--ink)" : "var(--border-strong)"}`,
-              background: as === o.k ? "var(--ink)" : "var(--surface)",
-              color: as === o.k ? "#fff" : "var(--ink)",
-            }}
-          >
-            {o.l}
-          </button>
-        ))}
-      </div>
+      </form>
     </div>
   );
 }
