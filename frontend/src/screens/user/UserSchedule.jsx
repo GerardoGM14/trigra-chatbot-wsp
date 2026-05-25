@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/ui/Button.jsx";
 import { I } from "../../components/Icons.jsx";
+import { useCampaigns } from "../../hooks/api/useCampaigns.js";
 import { useToast } from "../../lib/toast.jsx";
 import { EventDetailModal, RescheduleCampaignModal } from "../../modals";
+
+// Calendario de campañas programadas. Se alimenta de /api/campaigns y agrupa
+// por día (en zona local) las que tienen `scheduledAt`.
 
 const MONTHS = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -12,29 +16,36 @@ const MONTHS = [
 
 const DAY_HEADERS = ["L", "M", "M", "J", "V", "S", "D"];
 
-// Eventos hardcoded para Mayo 2026. Si navegas a otros meses queda vacío — el
-// mock no cubre más allá.
-const MAY_2026_EVENTS = {
-  5: [{ t: "09:00", n: "Encuesta NPS Abril", tone: "warn" }],
-  8: [{ t: "10:00", n: "Catálogo Q2 — PDF", tone: "warn" }],
-  12: [{ t: "14:30", n: "Promo Mayo — Clientes A", tone: "accent" }],
-  14: [{ t: "09:00", n: "Recurrente: Bienvenida leads", tone: "info" }],
-  21: [{ t: "09:00", n: "Recurrente: Bienvenida leads", tone: "info" }],
-  24: [{ t: "16:00", n: "Reactivación inactivos", tone: "warn" }],
+const TONE_BY_STATUS = {
+  Enviando: "accent",
+  Programada: "warn",
+  Pausada: "danger",
 };
-
-const EVENT_BG = { accent: "var(--accent-soft)", info: "var(--info-soft)", warn: "var(--warn-soft)" };
-const EVENT_BORDER = { accent: "var(--accent)", info: "var(--info)", warn: "var(--warn)" };
 
 export function UserSchedule() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [month, setMonth] = useState(4); // 4 = Mayo
-  const [year, setYear] = useState(2026);
+  const campaignsQuery = useCampaigns();
+
+  const today = new Date();
+  const [month, setMonth] = useState(today.getMonth());
+  const [year, setYear] = useState(today.getFullYear());
   const [pickedEvent, setPickedEvent] = useState(null);
   const [reschedule, setReschedule] = useState(null);
 
-  const events = month === 4 && year === 2026 ? MAY_2026_EVENTS : {};
+  // Indexa las campañas por día del mes seleccionado.
+  const eventsByDay = useMemo(() => {
+    const map = {};
+    for (const c of campaignsQuery.data ?? []) {
+      if (!c.scheduledAt) continue;
+      const d = new Date(c.scheduledAt);
+      if (d.getMonth() !== month || d.getFullYear() !== year) continue;
+      const day = d.getDate();
+      const time = d.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false });
+      (map[day] ??= []).push({ t: time, n: c.name, tone: TONE_BY_STATUS[c.status] ?? "info", campaign: c });
+    }
+    return map;
+  }, [campaignsQuery.data, month, year]);
 
   const prevMonth = () => {
     if (month === 0) { setMonth(11); setYear((y) => y - 1); } else { setMonth((m) => m - 1); }
@@ -50,7 +61,12 @@ export function UserSchedule() {
         onPrev={prevMonth} onNext={nextMonth}
         onNewCampaign={() => navigate("/u/campaigns?compose=1")}
       />
-      <CalendarGrid events={events} onPickEvent={(day, ev) => setPickedEvent({ day, event: ev })} />
+      <CalendarGrid
+        month={month}
+        year={year}
+        events={eventsByDay}
+        onPickEvent={(day, ev) => setPickedEvent({ day, event: ev })}
+      />
 
       {pickedEvent && (
         <EventDetailModal
@@ -58,7 +74,10 @@ export function UserSchedule() {
           day={pickedEvent.day}
           onClose={() => setPickedEvent(null)}
           onReschedule={() => {
-            setReschedule({ id: "camp_evt", name: pickedEvent.event.n });
+            setReschedule({
+              id: pickedEvent.event.campaign.slug ?? pickedEvent.event.campaign.id,
+              name: pickedEvent.event.n,
+            });
             setPickedEvent(null);
           }}
         />
@@ -95,8 +114,13 @@ function Header({ month, year, onPrev, onNext, onNewCampaign }) {
   );
 }
 
-function CalendarGrid({ events, onPickEvent }) {
-  const cells = Array.from({ length: 35 }, (_, i) => i - 3); // offset
+function CalendarGrid({ month, year, events, onPickEvent }) {
+  // Calcula el offset del primer día (lunes como inicio).
+  const firstDay = new Date(year, month, 1);
+  const offset = (firstDay.getDay() + 6) % 7; // domingo=6, lunes=0
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const cells = Array.from({ length: Math.max(35, offset + lastDay) }, (_, i) => i - offset + 1);
+
   return (
     <div className="bg-surface" style={{ border: "1px solid var(--border)" }}>
       <div className="grid" style={{ gridTemplateColumns: "repeat(7,1fr)", borderBottom: "1px solid var(--border)" }}>
@@ -112,15 +136,15 @@ function CalendarGrid({ events, onPickEvent }) {
       </div>
       <div className="grid" style={{ gridTemplateColumns: "repeat(7,1fr)" }}>
         {cells.map((c, i) => (
-          <DayCell key={i} day={c} index={i} events={events[c] || []} onPickEvent={onPickEvent} />
+          <DayCell key={i} day={c} index={i} lastDay={lastDay} events={events[c] ?? []} onPickEvent={onPickEvent} />
         ))}
       </div>
     </div>
   );
 }
 
-function DayCell({ day, index, events, onPickEvent }) {
-  const valid = day >= 1 && day <= 31;
+function DayCell({ day, index, lastDay, events, onPickEvent }) {
+  const valid = day >= 1 && day <= lastDay;
   return (
     <div
       style={{
@@ -146,8 +170,17 @@ function DayCell({ day, index, events, onPickEvent }) {
           style={{
             padding: "4px 6px",
             marginBottom: 4,
-            background: EVENT_BG[e.tone],
-            borderLeft: `2px solid ${EVENT_BORDER[e.tone]}`,
+            background:
+              e.tone === "accent" ? "var(--accent-soft)" :
+              e.tone === "info" ? "var(--info-soft)" :
+              e.tone === "warn" ? "var(--warn-soft)" :
+              "var(--danger-soft)",
+            borderLeft: `2px solid ${
+              e.tone === "accent" ? "var(--accent)" :
+              e.tone === "info" ? "var(--info)" :
+              e.tone === "warn" ? "var(--warn)" :
+              "var(--danger)"
+            }`,
             color: "var(--ink)",
           }}
         >

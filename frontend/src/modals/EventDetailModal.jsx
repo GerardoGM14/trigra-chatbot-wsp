@@ -2,7 +2,7 @@ import { I } from "../components/Icons.jsx";
 import { Button } from "../components/ui/Button.jsx";
 import { Badge } from "../components/ui/Badge.jsx";
 import { ModalShell } from "../components/overlays/ModalShell.jsx";
-import { ALL_OPERATORS } from "../lib/data.js";
+import { useAuth } from "../lib/auth.jsx";
 
 const STATUS_BY_TONE = {
   accent: "Activa",
@@ -10,7 +10,10 @@ const STATUS_BY_TONE = {
 };
 
 export function EventDetailModal({ event, day, onClose, onReschedule }) {
+  const { user } = useAuth();
   const statusLabel = STATUS_BY_TONE[event.tone] || "Programada";
+  // Si el evento trae owner del backend (event.campaign.owner.username), úsalo.
+  const ownerLabel = event.campaign?.owner?.username ?? user?.username ?? "—";
   return (
     <ModalShell
       title={event.n}
@@ -32,7 +35,7 @@ export function EventDetailModal({ event, day, onClose, onReschedule }) {
             <span style={{ width: 6, height: 6, background: "currentColor", display: "inline-block" }} />
             {statusLabel}
           </Badge>
-          <Badge tone="neutral">@{ALL_OPERATORS[0].u}</Badge>
+          <Badge tone="neutral">@{ownerLabel}</Badge>
         </div>
         <div
           className="grid gap-2 text-[13px]"

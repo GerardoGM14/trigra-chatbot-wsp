@@ -5,26 +5,61 @@ import { Field } from "../components/ui/Field.jsx";
 import { Input } from "../components/ui/Input.jsx";
 import { Select } from "../components/ui/Select.jsx";
 import { ModalShell } from "../components/overlays/ModalShell.jsx";
+import { useCreateTemplate, useUpdateTemplate } from "../hooks/api/useTemplates.js";
+import { useMutationError } from "../hooks/useMutationFeedback.js";
+import { useToast } from "../lib/toast.jsx";
 
 // Create + edit live in the same modal — `template === null` toggles "new".
 // Live preview on the right reacts to the editor on the left.
 
 const VARS = ["{{nombre}}", "{{plan}}", "{{fecha}}", "{{hora}}", "{{monto}}"];
 
-export function TemplateEditorModal({ template, onClose, onSave }) {
+function slugify(name) {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40) || `tpl_${Date.now().toString().slice(-5)}`;
+}
+
+export function TemplateEditorModal({ template, onClose }) {
   const isNew = !template;
+  const { toast } = useToast();
+  const onError = useMutationError(isNew ? "No se pudo crear la plantilla." : "No se pudo actualizar la plantilla.");
+  const createMutation = useCreateTemplate();
+  const updateMutation = useUpdateTemplate();
+  const pending = createMutation.isPending || updateMutation.isPending;
+
   const [name, setName] = useState(template?.name || "");
   const [type, setType] = useState(template?.type || "Texto");
   const [body, setBody] = useState(template?.body || "Hola {{nombre}}, ");
   const [items, setItems] = useState(
-    template?.itemList || [
-      { t: "Opción 1", d: "Descripción opcional" },
-      { t: "Opción 2", d: "" },
-    ],
+    Array.isArray(template?.items)
+      ? template.items
+      : [
+          { t: "Opción 1", d: "Descripción opcional" },
+          { t: "Opción 2", d: "" },
+        ],
   );
   const updateItem = (i, k, v) => setItems(items.map((it, idx) => (idx === i ? { ...it, [k]: v } : it)));
   const removeItem = (i) => setItems(items.filter((_, idx) => idx !== i));
   const addItem = () => setItems([...items, { t: `Opción ${items.length + 1}`, d: "" }]);
+
+  const save = (close) => {
+    if (!name.trim() || pending) return;
+    const payload = { name: name.trim(), type, body, items };
+    const onSuccess = () => {
+      toast.ok(isNew ? `Plantilla "${payload.name}" creada.` : "Plantilla actualizada.");
+      close();
+    };
+    if (isNew) {
+      createMutation.mutate({ slug: `tpl_${slugify(name)}`, ...payload }, { onSuccess, onError });
+    } else {
+      updateMutation.mutate({ id: template.id, ...payload }, { onSuccess, onError });
+    }
+  };
 
   return (
     <ModalShell
@@ -37,10 +72,10 @@ export function TemplateEditorModal({ template, onClose, onSave }) {
           <Button variant="ghost" onClick={close}>Cancelar</Button>
           <Button
             variant="primary"
-            onClick={() => { onSave && onSave({ name, type, body, items }); close(); }}
-            disabled={!name}
+            onClick={() => save(close)}
+            disabled={!name.trim() || pending}
           >
-            {isNew ? "Crear plantilla" : "Guardar cambios"}
+            {pending ? "Guardando…" : isNew ? "Crear plantilla" : "Guardar cambios"}
           </Button>
         </>
       )}

@@ -4,23 +4,19 @@ import { Badge } from "../../components/ui/Badge.jsx";
 import { Panel } from "../../components/ui/Panel.jsx";
 import { Stat } from "../../components/ui/Stat.jsx";
 import { I } from "../../components/Icons.jsx";
-import { BaileysWizard } from "../../modals";
+import {
+  useSessions,
+  useRestartSession,
+  useDeleteSession,
+} from "../../hooks/api/useSessions.js";
+import { useAuth } from "../../lib/auth.jsx";
+import { useToast } from "../../lib/toast.jsx";
+import { useMutationError } from "../../hooks/useMutationFeedback.js";
+import { BaileysWizard, ConfirmModal } from "../../modals";
 
-// Operator → "Mis sesiones". Lista de números vinculados + wizard para añadir
-// uno nuevo. El primer item viene precargado para que la demo no esté vacía.
-
-const INITIAL_SESSIONS = [
-  {
-    id: "sess_owner_01",
-    num: "+51 999 412 220",
-    status: "Conectado",
-    quality: "Alta",
-    battery: 84,
-    since: "02:14:08",
-    platform: "Android",
-    primary: true,
-  },
-];
+// Operador → "Mis sesiones". Lista solo las sesiones donde el usuario actual
+// está asignado (lo determina el backend en una iteración futura; por ahora el
+// listado expone todas y filtramos del lado cliente por `user.username`).
 
 const STEPS = [
   { n: 1, t: "Abre WSP en tu teléfono", d: "Toca el menú · Dispositivos vinculados · Vincular un dispositivo." },
@@ -29,21 +25,74 @@ const STEPS = [
 ];
 
 export function UserSessions() {
-  const [sessions, setSessions] = useState(INITIAL_SESSIONS);
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const onMutationError = useMutationError();
+
+  const sessionsQuery = useSessions();
+  const restartMutation = useRestartSession();
+  const deleteMutation = useDeleteSession();
+
   const [showWizard, setShowWizard] = useState(false);
-  const addSession = (s) => setSessions((list) => [...list, s]);
+  const [confirmRemove, setConfirmRemove] = useState(null);
+
+  const allSessions = sessionsQuery.data ?? [];
+  const mySessions = allSessions.filter((s) => (s.ops ?? []).includes(user?.username));
 
   return (
     <div className="route-enter grid gap-4">
       <Header onLink={() => setShowWizard(true)} />
-      <KpiRow sessions={sessions} />
-      <ActiveSessionsPanel sessions={sessions} setSessions={setSessions} onLink={() => setShowWizard(true)} />
-      <HowItWorksPanel />
+
+      {sessionsQuery.isLoading ? (
+        <div className="text-muted text-[13px] text-center bg-surface" style={{ padding: 32, border: "1px solid var(--border)" }}>
+          Cargando sesiones…
+        </div>
+      ) : sessionsQuery.isError ? (
+        <div className="text-center bg-surface" style={{ padding: 32, border: "1px solid var(--border)" }}>
+          <div className="text-[13px] text-danger">No se pudieron cargar las sesiones.</div>
+          <div className="mt-3"><Button size="sm" variant="ghost" onClick={() => sessionsQuery.refetch()}>Reintentar</Button></div>
+        </div>
+      ) : (
+        <>
+          <KpiRow sessions={mySessions} />
+          <ActiveSessionsPanel
+            sessions={mySessions}
+            onLink={() => setShowWizard(true)}
+            onRestart={(s) =>
+              restartMutation.mutate(s.id, {
+                onSuccess: () => toast.ok(`Reiniciando ${s.phoneNumber}…`),
+                onError: onMutationError,
+              })
+            }
+            onDisconnect={(s) => setConfirmRemove(s)}
+            isRestarting={restartMutation.isPending}
+          />
+          <HowItWorksPanel />
+        </>
+      )}
 
       {showWizard && (
         <BaileysWizard
           onClose={() => setShowWizard(false)}
-          onConnect={(s) => { addSession(s); setShowWizard(false); }}
+          onConnect={() => {
+            setShowWizard(false);
+            sessionsQuery.refetch();
+          }}
+        />
+      )}
+      {confirmRemove && (
+        <ConfirmModal
+          title="Desconectar sesión"
+          message={`¿Desconectar ${confirmRemove.phoneNumber}? Tendrás que volver a escanear el QR.`}
+          confirmLabel="Desconectar"
+          tone="danger"
+          onClose={() => setConfirmRemove(null)}
+          onConfirm={() =>
+            deleteMutation.mutate(confirmRemove.id, {
+              onSuccess: () => toast.warn("Sesión desconectada."),
+              onError: onMutationError,
+            })
+          }
         />
       )}
     </div>
@@ -67,51 +116,38 @@ function Header({ onLink }) {
 }
 
 function KpiRow({ sessions }) {
+  const connected = sessions.filter((s) => s.status === "Conectado").length;
   return (
     <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
       <Stat
         label="Sesiones vinculadas"
         value={String(sessions.length).padStart(2, "0")}
-        sub={`${sessions.filter((s) => s.status === "Conectado").length} conectadas`}
+        sub={`${connected} conectadas`}
       />
       <Stat label="Velocidad combinada" value={`${sessions.length * 60} msj/min`} sub="60 msj/min por sesión" />
-      <Stat label="Mensajes hoy" value="12.480" sub="Tasa de entrega 98,3%" trend="+8,2%" />
-      <Stat label="Última conexión" value={sessions[0]?.since || "—"} sub={sessions[0]?.num || "—"} mono />
+      <Stat label="Mensajes hoy" value="—" sub="Pronto" />
+      <Stat label="Última conexión" value={sessions[0]?.connectedAt ? "activa" : "—"} sub={sessions[0]?.phoneNumber ?? "—"} mono />
     </div>
   );
 }
 
-function ActiveSessionsPanel({ sessions, setSessions, onLink }) {
+function ActiveSessionsPanel({ sessions, onLink, onRestart, onDisconnect, isRestarting }) {
   return (
     <Panel title="Sesiones activas" subtitle="Cada sesión equivale a un número de WSP independiente.">
       <div className="grid gap-0">
-        {sessions.map((s, i) => (
-          <SessionRow key={s.id} session={s} index={i} setSessions={setSessions} />
-        ))}
-        {sessions.length === 0 && <EmptyState onLink={onLink} />}
+        {sessions.length === 0 ? (
+          <EmptyState onLink={onLink} />
+        ) : (
+          sessions.map((s, i) => (
+            <SessionRow key={s.id} session={s} index={i} onRestart={onRestart} onDisconnect={onDisconnect} isRestarting={isRestarting} />
+          ))
+        )}
       </div>
     </Panel>
   );
 }
 
-function SessionRow({ session, index, setSessions }) {
-  const restart = () => {
-    setSessions((list) =>
-      list.map((x) => (x.id === session.id ? { ...x, status: "Reconectando", since: "00:00:04" } : x)),
-    );
-    setTimeout(
-      () =>
-        setSessions((list) =>
-          list.map((x) => (x.id === session.id ? { ...x, status: "Conectado", since: "00:00:12" } : x)),
-        ),
-      1400,
-    );
-  };
-  const disconnect = () => {
-    if (confirm(`¿Desconectar ${session.num}? Tendrás que volver a escanear el QR.`)) {
-      setSessions((list) => list.filter((x) => x.id !== session.id));
-    }
-  };
+function SessionRow({ session, index, onRestart, onDisconnect, isRestarting }) {
   return (
     <div
       className="grid items-center"
@@ -129,12 +165,9 @@ function SessionRow({ session, index, setSessions }) {
         <I.link size={16} />
       </div>
       <div>
-        <div className="text-[13px] font-semibold">
-          {session.num}{" "}
-          {session.primary && <Badge tone="accent" style={{ marginLeft: 6 }}>Principal</Badge>}
-        </div>
+        <div className="text-[13px] font-semibold">{session.phoneNumber}</div>
         <div className="mono text-[11px] text-muted mt-0.5">
-          {session.id} · {session.platform}
+          {session.slug} · {session.platform ?? "Sin plataforma"}
         </div>
       </div>
       <Badge tone={session.status === "Conectado" ? "info" : session.status === "Reconectando" ? "warn" : "danger"}>
@@ -145,12 +178,24 @@ function SessionRow({ session, index, setSessions }) {
         {session.status}
       </Badge>
       <div className="text-xs text-muted">
-        Calidad <span className="text-ink">{session.quality}</span>
+        Calidad <span className="text-ink">{session.quality ?? "—"}</span>
       </div>
-      <div className="mono text-xs text-muted">uptime {session.since}</div>
+      <div className="mono text-xs text-muted">
+        {session.connectedAt ? new Date(session.connectedAt).toLocaleString("es-PE") : "—"}
+      </div>
       <div className="flex gap-1.5 justify-end">
-        <Button size="sm" variant="ghost" icon={<I.refresh size={12} />} onClick={restart}>Reiniciar</Button>
-        <Button size="sm" variant="ghost" icon={<I.x size={12} />} onClick={disconnect}>Desconectar</Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<I.refresh size={12} />}
+          disabled={isRestarting}
+          onClick={() => onRestart(session)}
+        >
+          Reiniciar
+        </Button>
+        <Button size="sm" variant="ghost" icon={<I.x size={12} />} onClick={() => onDisconnect(session)}>
+          Desconectar
+        </Button>
       </div>
     </div>
   );

@@ -6,9 +6,15 @@ import { Table } from "../../components/ui/Table.jsx";
 import { Progress } from "../../components/ui/Progress.jsx";
 import { Menu } from "../../components/overlays/Menu.jsx";
 import { I } from "../../components/Icons.jsx";
+import {
+  useCampaigns,
+  useDeleteCampaign,
+  useCampaignAction,
+  useCreateCampaign,
+} from "../../hooks/api/useCampaigns.js";
+import { useMutationError } from "../../hooks/useMutationFeedback.js";
 import { useToast } from "../../lib/toast.jsx";
-import { CAMPAIGNS } from "../../lib/data.js";
-import { newCampaignId } from "../../lib/ids.js";
+import { num } from "../../lib/format.js";
 import {
   PickTemplateModal,
   ConfirmModal,
@@ -26,11 +32,22 @@ const STATUS_TONE = {
   Pausada: "danger",
 };
 
+// Genera un id corto fuera del render para evitar el lint react-hooks/purity.
+function makeShortId(prefix) {
+  return `${prefix}_${Date.now().toString().slice(-5)}`;
+}
+
 export function UserCampaigns({ onCompose }) {
   const { toast } = useToast();
+  const onMutationError = useMutationError();
+
   const [tab, setTab] = useState("Todas");
   const [q, setQ] = useState("");
-  const [campaigns, setCampaigns] = useState(CAMPAIGNS);
+
+  const campaignsQuery = useCampaigns(tab === "Todas" ? {} : { status: tab });
+  const deleteMutation = useDeleteCampaign();
+  const actionMutation = useCampaignAction();
+  const duplicateMutation = useCreateCampaign();
 
   const [pickTpl, setPickTpl] = useState(false);
   const [detail, setDetail] = useState(null);
@@ -38,79 +55,95 @@ export function UserCampaigns({ onCompose }) {
   const [recipients, setRecipients] = useState(null);
   const [confirm, setConfirm] = useState(null);
 
-  const filtered = campaigns
-    .filter((c) => tab === "Todas" || c.status === tab)
-    .filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase()) || c.id.includes(q.toLowerCase()));
+  const campaigns = campaignsQuery.data ?? [];
+  const filtered = campaigns.filter(
+    (c) => !q || c.name.toLowerCase().includes(q.toLowerCase()) || c.slug?.includes(q.toLowerCase()),
+  );
 
-  const setStatus = (id, status) =>
-    setCampaigns((list) => list.map((c) => (c.id === id ? { ...c, status } : c)));
-  const removeCampaign = (id) => setCampaigns((list) => list.filter((c) => c.id !== id));
+  const runAction = (id, action, label) =>
+    actionMutation.mutate(
+      { id, action },
+      {
+        onSuccess: () => toast.ok(label),
+        onError: onMutationError,
+      },
+    );
+
   const duplicateCampaign = (c) => {
-    const copy = {
-      ...c,
-      id: newCampaignId(),
-      name: `${c.name} (copia)`,
-      status: "Borrador",
-      progress: 0,
-      sent: 0,
-      fail: 0,
-    };
-    setCampaigns((list) => [copy, ...list]);
-    toast.ok(`Duplicada como "${copy.name}".`);
+    duplicateMutation.mutate(
+      {
+        slug: makeShortId("camp"),
+        name: `${c.name} (copia)`,
+        type: c.type,
+        body: c.body ?? "Cuerpo del mensaje",
+        ownerId: c.ownerId,
+        groupIds: [],
+      },
+      {
+        onSuccess: () => toast.ok(`Duplicada como "${c.name} (copia)".`),
+        onError: onMutationError,
+      },
+    );
   };
+
   const downloadReport = (c) => {
-    const csv = `campaña,id,enviados,fallidos,total\n${c.name},${c.id},${c.sent},${c.fail},${c.total}`;
+    const csv = `campaña,id,enviados,fallidos,total\n${c.name},${c.slug},${c.sent},${c.failed ?? 0},${c.total}`;
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `reporte_${c.id}.csv`;
+    a.download = `reporte_${c.slug}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.ok(`Reporte de ${c.id} descargado.`);
+    toast.ok(`Reporte de ${c.slug} descargado.`);
   };
 
   return (
     <div className="grid gap-4">
       <Header onCompose={onCompose} onPickTemplate={() => setPickTpl(true)} />
       <Tabs q={q} setQ={setQ} tab={tab} setTab={setTab} />
-      <Table
-        columns={buildColumns({
-          onPause: (c) => { setStatus(c.id, "Pausada"); toast.warn(`Campaña "${c.name}" pausada.`); },
-          onResume: (c) => { setStatus(c.id, "Enviando"); toast.ok(`Campaña "${c.name}" reanudada.`); },
-          onDetail: setDetail,
-          onDuplicate: duplicateCampaign,
-          onEdit: onCompose,
-          onReschedule: setReschedule,
-          onLaunch: (c) => setConfirm({ kind: "launch", campaign: c }),
-          onReport: downloadReport,
-          onRecipients: setRecipients,
-          onArchive: (c) => setConfirm({ kind: "archive", campaign: c }),
-          onDelete: (c) => setConfirm({ kind: "delete", campaign: c }),
-          setStatus,
-          toast,
-        })}
-        rows={filtered}
-      />
+
+      {campaignsQuery.isLoading ? (
+        <Skeleton label="Cargando campañas…" />
+      ) : campaignsQuery.isError ? (
+        <ErrorPanel onRetry={() => campaignsQuery.refetch()} />
+      ) : (
+        <Table
+          columns={buildColumns({
+            onPause: (c) => runAction(c.id, "pause", `Campaña "${c.name}" pausada.`),
+            onResume: (c) => runAction(c.id, "resume", `Campaña "${c.name}" reanudada.`),
+            onDetail: setDetail,
+            onDuplicate: duplicateCampaign,
+            onEdit: onCompose,
+            onReschedule: setReschedule,
+            onLaunch: (c) => setConfirm({ kind: "launch", campaign: c }),
+            onReport: downloadReport,
+            onRecipients: setRecipients,
+            onArchive: (c) => setConfirm({ kind: "archive", campaign: c }),
+            onDelete: (c) => setConfirm({ kind: "delete", campaign: c }),
+          })}
+          rows={filtered}
+        />
+      )}
 
       {pickTpl && (
         <PickTemplateModal
           onClose={() => setPickTpl(false)}
-          onPick={(t) => { toast.ok(`Plantilla "${t.name}" seleccionada. Abriendo editor…`); onCompose(); }}
+          onPick={(t) => { toast.ok(`Plantilla "${t.name}" seleccionada.`); onCompose(); }}
         />
       )}
-      {detail && <CampaignDetailModal campaign={detail} onClose={() => setDetail(null)} />}
+      {detail && <CampaignDetailModal campaign={normalizeForDetail(detail)} onClose={() => setDetail(null)} />}
       {reschedule && (
         <RescheduleCampaignModal
           campaign={reschedule}
           onClose={() => setReschedule(null)}
           onSave={(when) => {
-            setCampaigns((list) => list.map((c) => (c.id === reschedule.id ? { ...c, scheduled: when } : c)));
             toast.ok(`Reprogramada para ${when}.`);
+            // TODO: cuando el backend exponga /api/campaigns/:id/reschedule lo conectamos.
           }}
         />
       )}
-      {recipients && <RecipientsModal campaign={recipients} onClose={() => setRecipients(null)} />}
+      {recipients && <RecipientsModal campaign={normalizeForDetail(recipients)} onClose={() => setRecipients(null)} />}
       {confirm && (
         <ConfirmModal
           title={confirmTitle(confirm)}
@@ -119,14 +152,37 @@ export function UserCampaigns({ onCompose }) {
           tone={confirm.kind === "delete" ? "danger" : "primary"}
           onClose={() => setConfirm(null)}
           onConfirm={() => {
-            if (confirm.kind === "delete") { removeCampaign(confirm.campaign.id); toast.warn("Campaña eliminada."); }
-            else if (confirm.kind === "archive") { removeCampaign(confirm.campaign.id); toast.ok("Campaña archivada."); }
-            else { setStatus(confirm.campaign.id, "Enviando"); toast.ok(`Campaña "${confirm.campaign.name}" lanzada.`); }
+            if (confirm.kind === "delete") {
+              deleteMutation.mutate(confirm.campaign.id, {
+                onSuccess: () => toast.warn("Campaña eliminada."),
+                onError: onMutationError,
+              });
+            } else if (confirm.kind === "archive") {
+              runAction(confirm.campaign.id, "archive", "Campaña archivada.");
+            } else {
+              runAction(confirm.campaign.id, "launch", `Campaña "${confirm.campaign.name}" lanzada.`);
+            }
           }}
         />
       )}
     </div>
   );
+}
+
+// Algunos modales esperan el shape del mock antiguo. Adaptamos.
+function normalizeForDetail(c) {
+  return {
+    id: c.slug ?? c.id,
+    name: c.name,
+    type: c.type,
+    status: c.status,
+    total: c.total,
+    sent: c.sent,
+    fail: c.failed ?? 0,
+    progress: c.progress,
+    scheduled: c.scheduledAt ? new Date(c.scheduledAt).toLocaleString("es-PE") : "—",
+    owner: c.owner?.username ?? "—",
+  };
 }
 
 function Header({ onCompose, onPickTemplate }) {
@@ -185,7 +241,7 @@ function buildColumns(h) {
       render: (r) => (
         <div>
           <div className="text-[13px] font-medium">{r.name}</div>
-          <div className="mono text-[11px] text-muted mt-0.5">{r.id} · {r.type}</div>
+          <div className="mono text-[11px] text-muted mt-0.5">{r.slug ?? r.id} · {r.type}</div>
         </div>
       ),
     },
@@ -204,7 +260,7 @@ function buildColumns(h) {
         <div style={{ width: 200 }}>
           <Progress value={r.sent} total={r.total || 1} tone={r.status === "Enviando" ? "accent" : "ink"} />
           <div className="mono text-[11px] text-muted mt-1">
-            {r.sent.toLocaleString("es-PE")} / {r.total.toLocaleString("es-PE")}
+            {num(r.sent)} / {num(r.total)}
           </div>
         </div>
       ),
@@ -213,13 +269,18 @@ function buildColumns(h) {
       label: "Fallidos",
       align: "right",
       render: (r) => (
-        <span className="mono" style={{ color: r.fail > 0 ? "var(--danger)" : "var(--muted)" }}>
-          {r.fail}
+        <span className="mono" style={{ color: (r.failed ?? 0) > 0 ? "var(--danger)" : "var(--muted)" }}>
+          {r.failed ?? 0}
         </span>
       ),
     },
-    { label: "Programación", render: (r) => <span className="text-xs">{r.scheduled}</span> },
-    { label: "Operador", render: (r) => <span className="mono text-xs">{r.owner}</span> },
+    {
+      label: "Programación",
+      render: (r) => (
+        <span className="text-xs">{r.scheduledAt ? new Date(r.scheduledAt).toLocaleString("es-PE") : "—"}</span>
+      ),
+    },
+    { label: "Operador", render: (r) => <span className="mono text-xs">{r.owner?.username ?? "—"}</span> },
     {
       label: "",
       align: "right",
@@ -255,12 +316,6 @@ function buildMenuItems(r, h) {
     },
     { label: "Reprogramar envío", icon: <I.cal size={12} />, onClick: () => h.onReschedule(r) },
     { divider: true },
-    ...(r.status === "Enviando"
-      ? [{ label: "Pausar envío", icon: <I.pause size={12} />, onClick: () => { h.setStatus(r.id, "Pausada"); h.toast.warn(`Pausada ${r.id}`); } }]
-      : []),
-    ...(r.status === "Pausada"
-      ? [{ label: "Reanudar envío", icon: <I.play size={12} />, onClick: () => { h.setStatus(r.id, "Enviando"); h.toast.ok(`Reanudada ${r.id}`); } }]
-      : []),
     ...(r.status === "Programada"
       ? [{ label: "Lanzar ahora", icon: <I.send size={12} />, onClick: () => h.onLaunch(r) }]
       : []),
@@ -280,10 +335,28 @@ function confirmTitle(c) {
 function confirmMessage(c) {
   if (c.kind === "delete") return `Vas a eliminar "${c.campaign.name}". Esta acción no se puede deshacer.`;
   if (c.kind === "archive") return `"${c.campaign.name}" pasará al archivo y dejará de aparecer en la lista.`;
-  return `Vas a lanzar "${c.campaign.name}" ahora mismo a ${c.campaign.total.toLocaleString("es-PE")} destinatarios.`;
+  return `Vas a lanzar "${c.campaign.name}" ahora mismo a ${num(c.campaign.total)} destinatarios.`;
 }
 function confirmLabel(c) {
   if (c.kind === "delete") return "Eliminar";
   if (c.kind === "archive") return "Archivar";
   return "Lanzar ahora";
+}
+
+function Skeleton({ label }) {
+  return (
+    <div className="bg-surface text-muted text-[13px] text-center" style={{ padding: 32, border: "1px solid var(--border)" }}>
+      {label}
+    </div>
+  );
+}
+function ErrorPanel({ onRetry }) {
+  return (
+    <div className="bg-surface text-center" style={{ padding: 32, border: "1px solid var(--border)" }}>
+      <div className="text-[13px] text-danger">No se pudieron cargar las campañas.</div>
+      <div className="mt-3">
+        <Button size="sm" variant="ghost" onClick={onRetry}>Reintentar</Button>
+      </div>
+    </div>
+  );
 }

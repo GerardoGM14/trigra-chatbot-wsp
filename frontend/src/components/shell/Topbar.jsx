@@ -8,11 +8,11 @@ import { NotificationsModal } from "../../modals/NotificationsModal.jsx";
 import { ProfileModal } from "../../modals/ProfileModal.jsx";
 import { ROUTE_LABELS } from "./navItems.jsx";
 
-// Breadcrumb + search + role switcher + bell + profile. The bell badge counts
-// down to 0 once the user opens the notifications panel.
+// Breadcrumb + búsqueda + bell + perfil. La búsqueda global vendrá conectada
+// al backend en una fase futura — por ahora es un campo controlado sin acción.
 
 export function Topbar() {
-  const { user, logout, switchRole } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const isAdmin = user?.role === "admin";
@@ -23,10 +23,6 @@ export function Topbar() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [unread, setUnread] = useState(4);
 
-  const handleSwitch = (role) => {
-    switchRole(role);
-    navigate(role === "admin" ? "/a" : "/u");
-  };
   const handleLogout = () => {
     logout();
     navigate("/login");
@@ -62,31 +58,6 @@ export function Topbar() {
       </div>
 
       <div className="flex-1" />
-
-      <div className="flex bg-surface" style={{ border: "1px solid var(--border-strong)" }}>
-        {[
-          { k: "admin", l: "Vista Admin" },
-          { k: "user", l: "Vista Operador" },
-        ].map((o, i) => (
-          <button
-            key={o.k}
-            onClick={() => handleSwitch(o.k)}
-            className="text-xs font-medium cursor-pointer"
-            style={{
-              padding: "6px 12px",
-              border: "none",
-              borderLeft: i > 0 ? "1px solid var(--border)" : "none",
-              background: user?.role === o.k ? "var(--ink)" : "transparent",
-              color: user?.role === o.k ? "#fff" : "var(--ink-2)",
-            }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              {o.k === "admin" ? <I.shield size={12} /> : <I.user1 size={12} />}
-              {o.l}
-            </span>
-          </button>
-        ))}
-      </div>
 
       <button
         type="button"

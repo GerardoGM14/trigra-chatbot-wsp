@@ -6,8 +6,10 @@ import { Table } from "../../components/ui/Table.jsx";
 import { Avatar } from "../../components/ui/Avatar.jsx";
 import { Menu } from "../../components/overlays/Menu.jsx";
 import { I } from "../../components/Icons.jsx";
+import { useUsers, useUpdateUser, useDeleteUser } from "../../hooks/api/useUsers.js";
+import { useMutationError } from "../../hooks/useMutationFeedback.js";
 import { useToast } from "../../lib/toast.jsx";
-import { USERS } from "../../lib/data.js";
+import { timeAgo } from "../../lib/format.js";
 import {
   CreateUserModal,
   EditUserModal,
@@ -29,24 +31,21 @@ const FILTER_FIELDS = [
       { value: "Invitado", label: "Invitado" },
     ],
   },
-  {
-    key: "sort",
-    label: "Orden",
-    type: "select",
-    options: [{ value: "sent", label: "Más mensajes enviados primero" }],
-  },
 ];
 
 export function AdminUsers() {
   const { toast } = useToast();
+  const onMutationError = useMutationError("Ocurrió un error.");
+
+  const usersQuery = useUsers();
+  const updateMutation = useUpdateUser();
+  const deleteMutation = useDeleteUser();
+
   const [q, setQ] = useState("");
-  const [role, setRole] = useState("Todos");
-  const [users, setUsers] = useState(USERS);
+  const [roleFilter, setRoleFilter] = useState("Todos");
   const [filters, setFilters] = useState({});
   const [page, setPage] = useState(1);
 
-  // Modal selectors. Keeping each in its own state lets multiple coexist (e.g.
-  // confirm-on-top-of-edit, even though we don't use that today).
   const [showCreate, setShowCreate] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -54,11 +53,16 @@ export function AdminUsers() {
   const [assigningSessions, setAssigningSessions] = useState(null);
   const [confirm, setConfirm] = useState(null);
 
+  const users = usersQuery.data ?? [];
   const filtered = users
-    .filter((u) => role === "Todos" || u.role === role)
+    .filter((u) => roleFilter === "Todos" || u.role === roleFilter)
     .filter((u) => !filters.status || u.status === filters.status)
-    .filter((u) => u.name.toLowerCase().includes(q.toLowerCase()) || u.email.toLowerCase().includes(q.toLowerCase()))
-    .sort((a, b) => (filters.sort === "sent" ? b.sent - a.sent : 0));
+    .filter(
+      (u) =>
+        u.name.toLowerCase().includes(q.toLowerCase()) ||
+        u.email.toLowerCase().includes(q.toLowerCase()) ||
+        u.username.toLowerCase().includes(q.toLowerCase()),
+    );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -66,26 +70,37 @@ export function AdminUsers() {
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   const exportCsv = () => {
-    const header = ["id", "nombre", "correo", "rol", "estado", "campañas", "mensajes"];
-    const rows = filtered.map((u) => [u.id, u.name, u.email, u.role, u.status, u.campaigns, u.sent]);
+    const header = ["id", "username", "nombre", "correo", "rol", "estado", "lastSeen"];
+    const rows = filtered.map((u) => [u.id, u.username, u.name, u.email, u.role, u.status, u.lastSeen ?? ""]);
     downloadCsv([header, ...rows], `usuarios_${new Date().toISOString().slice(0, 10)}.csv`);
     toast.ok(`Exportados ${filtered.length} usuarios a CSV.`);
   };
 
-  const saveEdit = (next) => {
-    setUsers((list) => list.map((x) => (x.id === next.id ? next : x)));
-    toast.ok(`Cambios guardados en ${next.name}.`);
-  };
-  const toggleSuspend = (u) => {
-    setUsers((list) =>
-      list.map((x) => (x.id === u.id ? { ...x, status: x.status === "Suspendido" ? "Activo" : "Suspendido" } : x)),
+  const saveEdit = (next) =>
+    updateMutation.mutate(
+      { id: next.id, name: next.name, email: next.email, role: next.role, status: next.status },
+      {
+        onSuccess: () => toast.ok(`Cambios guardados en ${next.name}.`),
+        onError: onMutationError,
+      },
     );
-    toast.ok(`${u.name} ${u.status === "Suspendido" ? "reactivado" : "suspendido"}.`);
+
+  const toggleSuspend = (u) => {
+    const newStatus = u.status === "Suspendido" ? "Activo" : "Suspendido";
+    updateMutation.mutate(
+      { id: u.id, status: newStatus },
+      {
+        onSuccess: () => toast.ok(`${u.name} ${newStatus === "Activo" ? "reactivado" : "suspendido"}.`),
+        onError: onMutationError,
+      },
+    );
   };
-  const removeUser = (u) => {
-    setUsers((list) => list.filter((x) => x.id !== u.id));
-    toast.warn(`Usuario ${u.name} eliminado.`);
-  };
+
+  const removeUser = (u) =>
+    deleteMutation.mutate(u.id, {
+      onSuccess: () => toast.warn(`Usuario ${u.name} eliminado.`),
+      onError: onMutationError,
+    });
 
   return (
     <div className="grid gap-4">
@@ -94,33 +109,40 @@ export function AdminUsers() {
       <Toolbar
         q={q}
         setQ={setQ}
-        role={role}
-        setRole={setRole}
+        role={roleFilter}
+        setRole={setRoleFilter}
         activeFilterCount={activeFilterCount}
         onFilters={() => setFiltersOpen(true)}
         onExport={exportCsv}
       />
 
-      <Table
-        columns={buildColumns({
-          onEdit: setEditing,
-          onResetPassword: (u) => toast.ok(`Nueva contraseña temporal enviada a ${u.email}.`),
-          onAssignSessions: setAssigningSessions,
-          onViewActivity: setViewingActivity,
-          onSuspend: (u) => setConfirm({ kind: "suspend", user: u }),
-          onDelete: (u) => setConfirm({ kind: "delete", user: u }),
-        })}
-        rows={pageRows}
-      />
-
-      <Pagination
-        page={safePage}
-        totalPages={totalPages}
-        visible={pageRows.length}
-        filteredTotal={filtered.length}
-        total={users.length}
-        onPage={setPage}
-      />
+      {usersQuery.isLoading ? (
+        <LoadingPanel label="Cargando usuarios…" />
+      ) : usersQuery.isError ? (
+        <ErrorPanel onRetry={() => usersQuery.refetch()} />
+      ) : (
+        <>
+          <Table
+            columns={buildColumns({
+              onEdit: setEditing,
+              onResetPassword: (u) => toast.ok(`Nueva contraseña temporal enviada a ${u.email}.`),
+              onAssignSessions: setAssigningSessions,
+              onViewActivity: setViewingActivity,
+              onSuspend: (u) => setConfirm({ kind: "suspend", user: u }),
+              onDelete: (u) => setConfirm({ kind: "delete", user: u }),
+            })}
+            rows={pageRows}
+          />
+          <Pagination
+            page={safePage}
+            totalPages={totalPages}
+            visible={pageRows.length}
+            filteredTotal={filtered.length}
+            total={users.length}
+            onPage={setPage}
+          />
+        </>
+      )}
 
       {showCreate && <CreateUserModal onClose={() => setShowCreate(false)} />}
       {editing && <EditUserModal user={editing} onClose={() => setEditing(null)} onSave={saveEdit} />}
@@ -176,12 +198,12 @@ function Toolbar({ q, setQ, role, setRole, activeFilterCount, onFilters, onExpor
       <Input
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Buscar por nombre o correo…"
+        placeholder="Buscar por nombre, usuario o correo…"
         icon={<I.search size={14} />}
         style={{ flex: 1, maxWidth: 380 }}
       />
       <div className="flex bg-surface" style={{ border: "1px solid var(--border-strong)" }}>
-        {["Todos", "Supervisor", "Operador"].map((r) => (
+        {["Todos", "Administrador", "Supervisor", "Operador"].map((r) => (
           <button
             key={r}
             onClick={() => setRole(r)}
@@ -253,7 +275,8 @@ function buildColumns({ onEdit, onResetPassword, onAssignSessions, onViewActivit
         </div>
       ),
     },
-    { label: "Rol", render: (r) => <Badge tone={r.role === "Supervisor" ? "accent" : "neutral"}>{r.role}</Badge> },
+    { label: "@", render: (r) => <span className="mono text-xs">{r.username}</span> },
+    { label: "Rol", render: (r) => <Badge tone={r.role === "Administrador" || r.role === "Supervisor" ? "accent" : "neutral"}>{r.role}</Badge> },
     {
       label: "Estado",
       render: (r) => (
@@ -263,9 +286,7 @@ function buildColumns({ onEdit, onResetPassword, onAssignSessions, onViewActivit
         </Badge>
       ),
     },
-    { label: "Campañas", align: "right", render: (r) => <span className="mono">{r.campaigns}</span> },
-    { label: "Mensajes enviados", align: "right", render: (r) => <span className="mono">{r.sent.toLocaleString("es-PE")}</span> },
-    { label: "Última actividad", render: (r) => <span className="text-xs text-muted">{r.lastSeen}</span> },
+    { label: "Última actividad", render: (r) => <span className="text-xs text-muted">{timeAgo(r.lastSeen)}</span> },
     {
       label: "",
       align: "right",
@@ -314,4 +335,28 @@ function downloadCsv(rows, filename) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function LoadingPanel({ label }) {
+  return (
+    <div
+      className="bg-surface text-muted text-[13px] text-center"
+      style={{ padding: "32px 20px", border: "1px solid var(--border)" }}
+    >
+      {label}
+    </div>
+  );
+}
+function ErrorPanel({ onRetry }) {
+  return (
+    <div
+      className="bg-surface text-center"
+      style={{ padding: "32px 20px", border: "1px solid var(--border)" }}
+    >
+      <div className="text-[13px] text-danger">No se pudo cargar la información del servidor.</div>
+      <div className="mt-3">
+        <Button size="sm" variant="ghost" onClick={onRetry}>Reintentar</Button>
+      </div>
+    </div>
+  );
 }

@@ -4,8 +4,11 @@ import { Field } from "../components/ui/Field.jsx";
 import { Input } from "../components/ui/Input.jsx";
 import { Select } from "../components/ui/Select.jsx";
 import { ModalShell } from "../components/overlays/ModalShell.jsx";
+import { useCreateGroup } from "../hooks/api/useGroups.js";
+import { useMutationError } from "../hooks/useMutationFeedback.js";
+import { useToast } from "../lib/toast.jsx";
 
-const TAGS = ["clientes", "prospectos", "campañas", "soporte", "vip"];
+const TAGS = ["Clientes", "Prospectos", "Campañas", "Soporte", "VIP"];
 const PALETTE = ["#D97757", "#2540D9", "#7C3AED", "#0F766E", "#B45309", "#6B6862"];
 const SOURCES = [
   { k: "empty", l: "Grupo vacío", d: "Agrega contactos manualmente." },
@@ -13,11 +16,42 @@ const SOURCES = [
   { k: "filter", l: "Desde otro grupo", d: "Filtra con etiquetas." },
 ];
 
-export function NewGroupModal({ onClose, onCreate }) {
+// Slugifica el nombre para crear el `slug` que pide el backend.
+function slugify(name) {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40) || `grupo_${Date.now().toString().slice(-5)}`;
+}
+
+export function NewGroupModal({ onClose, onCreated }) {
+  const { toast } = useToast();
+  const createMutation = useCreateGroup();
+  const onError = useMutationError("No se pudo crear el grupo.");
+
   const [name, setName] = useState("");
-  const [tag, setTag] = useState("clientes");
+  const [tag, setTag] = useState("Clientes");
   const [desc, setDesc] = useState("");
   const [source, setSource] = useState("empty");
+
+  const create = (close) => {
+    if (!name.trim() || createMutation.isPending) return;
+    createMutation.mutate(
+      { slug: `grp_${slugify(name)}`, name: name.trim(), tag },
+      {
+        onSuccess: (group) => {
+          toast.ok(`Grupo "${group.name}" creado.`);
+          onCreated?.(group);
+          close();
+        },
+        onError,
+      },
+    );
+  };
+
   return (
     <ModalShell
       title="Nuevo grupo de contactos"
@@ -29,10 +63,10 @@ export function NewGroupModal({ onClose, onCreate }) {
           <Button variant="ghost" onClick={close}>Cancelar</Button>
           <Button
             variant="accent"
-            onClick={() => { onCreate && onCreate({ name, tag }); close(); }}
-            disabled={!name}
+            onClick={() => create(close)}
+            disabled={!name.trim() || createMutation.isPending}
           >
-            Crear grupo
+            {createMutation.isPending ? "Creando…" : "Crear grupo"}
           </Button>
         </>
       )}

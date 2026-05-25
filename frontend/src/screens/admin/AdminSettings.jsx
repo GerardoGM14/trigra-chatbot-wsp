@@ -7,14 +7,17 @@ import { Panel } from "../../components/ui/Panel.jsx";
 import { Avatar } from "../../components/ui/Avatar.jsx";
 import { Menu } from "../../components/overlays/Menu.jsx";
 import { I } from "../../components/Icons.jsx";
+import {
+  useSessions,
+  useAssignSession,
+  useSessionExclusive,
+  useRestartSession,
+  useDeleteSession,
+} from "../../hooks/api/useSessions.js";
+import { useUsers } from "../../hooks/api/useUsers.js";
+import { useMutationError } from "../../hooks/useMutationFeedback.js";
 import { useToast } from "../../lib/toast.jsx";
 import { BaileysWizard, SessionActionModal, EditSecurityPolicyModal } from "../../modals";
-
-const INITIAL_SESSIONS = [
-  { id: "session_01", num: "+51 999 412 220", status: "Conectado", since: "2h 14m", quality: "Alta", ops: ["maria.q", "r.salas"] },
-  { id: "session_02", num: "+51 998 220 118", status: "Conectado", since: "2h 11m", quality: "Alta", ops: ["c.mendoza"] },
-  { id: "session_03", num: "+51 944 901 412", status: "Reconectando", since: "14s", quality: "—", ops: ["lucia.r", "a.flores"] },
-];
 
 const INITIAL_POLICIES = {
   maxRate: "60 msj/min",
@@ -26,21 +29,66 @@ const INITIAL_POLICIES = {
 
 export function AdminSettings() {
   const { toast } = useToast();
-  const [sessions, setSessions] = useState(INITIAL_SESSIONS);
+  const onMutationError = useMutationError();
+
+  const sessionsQuery = useSessions();
+  const usersQuery = useUsers();
+  const assignMutation = useAssignSession();
+  const exclusiveMutation = useSessionExclusive();
+  const restartMutation = useRestartSession();
+  const deleteMutation = useDeleteSession();
+
   const [showNewSession, setShowNewSession] = useState(false);
   const [action, setAction] = useState(null);
+  // Las políticas siguen en estado local hasta que tengamos endpoint dedicado;
+  // /api/policies aterrizará en una iteración futura. El form ya está
+  // controlado, solo falta conectar la mutation.
   const [policies, setPolicies] = useState(INITIAL_POLICIES);
   const [editingPolicy, setEditingPolicy] = useState(null);
 
+  const sessions = sessionsQuery.data ?? [];
+  const users = usersQuery.data ?? [];
+  const usernameToId = Object.fromEntries(users.map((u) => [u.username, u.id]));
+
+  // Adapta acciones del SessionActionModal (que viene del prototipo) a los
+  // endpoints reales. `data` trae { ops } (usernames) para assign, { exclusive,
+  // owner } para exclusive, {} para restart/qr/unlink.
   const apply = (data) => {
     if (!action) return;
-    const sid = action.session.id;
-    if (action.type === "assign") setSessions((list) => list.map((s) => (s.id === sid ? { ...s, ops: data.ops } : s)));
-    if (action.type === "unlink") setSessions((list) => list.filter((s) => s.id !== sid));
-    if (action.type === "restart")
-      setSessions((list) => list.map((s) => (s.id === sid ? { ...s, status: "Reconectando", since: "00:00:04" } : s)));
-    if (action.type === "exclusive")
-      setSessions((list) => list.map((s) => (s.id === sid ? { ...s, ops: data.exclusive ? [data.owner] : s.ops } : s)));
+    const sessionId = action.session.id;
+    const handlers = {
+      assign: () => {
+        const ids = (data.ops ?? []).map((u) => usernameToId[u]).filter(Boolean);
+        assignMutation.mutate(
+          { id: sessionId, userIds: ids },
+          { onSuccess: () => toast.ok("Operadores asignados."), onError: onMutationError },
+        );
+      },
+      exclusive: () => {
+        exclusiveMutation.mutate(
+          {
+            id: sessionId,
+            exclusive: !!data.exclusive,
+            ownerId: data.exclusive ? usernameToId[data.owner] : null,
+          },
+          { onSuccess: () => toast.ok("Modo exclusivo actualizado."), onError: onMutationError },
+        );
+      },
+      restart: () => {
+        restartMutation.mutate(sessionId, {
+          onSuccess: () => toast.ok("Sesión reiniciándose…"),
+          onError: onMutationError,
+        });
+      },
+      unlink: () => {
+        deleteMutation.mutate(sessionId, {
+          onSuccess: () => toast.warn("Sesión desvinculada."),
+          onError: onMutationError,
+        });
+      },
+      qr: () => { /* el modal QR es solo visual, no muta */ },
+    };
+    handlers[action.type]?.();
   };
 
   return (
@@ -54,9 +102,16 @@ export function AdminSettings() {
 
       <SessionsPanel
         sessions={sessions}
-        setSessions={setSessions}
+        loading={sessionsQuery.isLoading}
         onNewSession={() => setShowNewSession(true)}
         onAction={setAction}
+        onRemoveOp={(session, op) => {
+          const remainingIds = session.ops.filter((u) => u !== op).map((u) => usernameToId[u]).filter(Boolean);
+          assignMutation.mutate(
+            { id: session.id, userIds: remainingIds },
+            { onError: onMutationError },
+          );
+        }}
       />
 
       <div className="grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
@@ -71,19 +126,19 @@ export function AdminSettings() {
       {showNewSession && (
         <BaileysWizard
           onClose={() => setShowNewSession(false)}
-          onConnect={(s) => {
+          onConnect={() => {
+            // Cuando la integración real con Baileys aterrice, el backend creará
+            // el registro y el siguiente refetch lo mostrará. Por ahora el
+            // wizard cierra y el operador puede comprobar en la lista.
             setShowNewSession(false);
-            setSessions((list) => [
-              ...list,
-              { id: s.id, num: s.num, status: "Conectado", since: "00:00:04", quality: "Alta", ops: [] },
-            ]);
+            sessionsQuery.refetch();
           }}
         />
       )}
       {action && (
         <SessionActionModal
           action={action.type}
-          session={action.session}
+          session={normalizeSessionForModal(action.session)}
           onClose={() => setAction(null)}
           onApply={apply}
         />
@@ -102,7 +157,13 @@ export function AdminSettings() {
   );
 }
 
-function SessionsPanel({ sessions, setSessions, onNewSession, onAction }) {
+// SessionActionModal espera { id, num, ops: [usernames] }; el backend devuelve
+// { id, slug, phoneNumber, ops }. Adaptamos al shape esperado.
+function normalizeSessionForModal(s) {
+  return { id: s.id, num: s.phoneNumber, ops: s.ops ?? [] };
+}
+
+function SessionsPanel({ sessions, loading, onNewSession, onAction, onRemoveOp }) {
   return (
     <Panel
       title="Sesiones Baileys · asignación a operadores"
@@ -129,9 +190,19 @@ function SessionsPanel({ sessions, setSessions, onNewSession, onAction }) {
         <span className="text-right">Acciones</span>
       </div>
       <div className="grid gap-0">
-        {sessions.map((s, i) => (
-          <SessionRow key={s.id} session={s} index={i} setSessions={setSessions} onAction={onAction} />
-        ))}
+        {loading ? (
+          <div className="text-muted text-[13px] text-center" style={{ padding: "24px 0" }}>
+            Cargando sesiones…
+          </div>
+        ) : sessions.length === 0 ? (
+          <div className="text-muted text-[13px] text-center" style={{ padding: "24px 0" }}>
+            Sin sesiones todavía. Vincula una con el botón "Nueva sesión".
+          </div>
+        ) : (
+          sessions.map((s, i) => (
+            <SessionRow key={s.id} session={s} index={i} onAction={onAction} onRemoveOp={onRemoveOp} />
+          ))
+        )}
       </div>
       <div
         className="text-xs"
@@ -144,7 +215,7 @@ function SessionsPanel({ sessions, setSessions, onNewSession, onAction }) {
   );
 }
 
-function SessionRow({ session, index, setSessions, onAction }) {
+function SessionRow({ session, index, onAction, onRemoveOp }) {
   return (
     <div
       className="grid items-center"
@@ -154,8 +225,8 @@ function SessionRow({ session, index, setSessions, onAction }) {
         borderTop: index > 0 ? "1px solid var(--border)" : "none",
       }}
     >
-      <span className="mono text-xs">{session.id}</span>
-      <span className="text-[13px] font-medium">{session.num}</span>
+      <span className="mono text-xs">{session.slug}</span>
+      <span className="text-[13px] font-medium">{session.phoneNumber}</span>
       <Badge tone={session.status === "Conectado" ? "info" : "warn"}>{session.status}</Badge>
       <div className="flex gap-1 items-center flex-wrap">
         {session.ops.map((op) => (
@@ -169,17 +240,18 @@ function SessionRow({ session, index, setSessions, onAction }) {
             <button
               className="border-none bg-transparent cursor-pointer p-0 text-muted"
               style={{ marginLeft: 2 }}
-              onClick={() =>
-                setSessions((list) =>
-                  list.map((x) => (x.id === session.id ? { ...x, ops: x.ops.filter((o) => o !== op) } : x)),
-                )
-              }
+              onClick={() => onRemoveOp(session, op)}
             >
               <I.x size={10} />
             </button>
           </span>
         ))}
-        <Button size="sm" variant="ghost" icon={<I.plus size={11} />} onClick={() => onAction({ type: "assign", session })}>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<I.plus size={11} />}
+          onClick={() => onAction({ type: "assign", session })}
+        >
           Asignar
         </Button>
       </div>

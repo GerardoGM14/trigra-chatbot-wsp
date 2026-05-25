@@ -4,12 +4,18 @@ import { Button } from "../components/ui/Button.jsx";
 import { Field } from "../components/ui/Field.jsx";
 import { Input } from "../components/ui/Input.jsx";
 import { Overlay } from "../components/overlays/Overlay.jsx";
+import { useCreateUser } from "../hooks/api/useUsers.js";
+import { useMutationError } from "../hooks/useMutationFeedback.js";
+import { useToast } from "../lib/toast.jsx";
 
-// "Nuevo usuario" — bespoke layout (rol cards + permission checkboxes) so it
-// doesn't reuse ModalShell directly. The Overlay portal still gives it the
-// full-viewport veil.
+// "Nuevo usuario" — bespoke layout. POST a /api/users; al éxito refresca la
+// lista (TanStack Query invalida el cache) y cierra el modal con su animación.
 
 export function CreateUserModal({ onClose }) {
+  const { toast } = useToast();
+  const createMutation = useCreateUser();
+  const onMutationError = useMutationError("No se pudo crear el usuario.");
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -20,6 +26,22 @@ export function CreateUserModal({ onClose }) {
   const close = () => {
     setClosing(true);
     setTimeout(onClose, 180);
+  };
+
+  const valid = name.trim() && email.includes("@") && username.length >= 3 && pw.length >= 8;
+
+  const submit = () => {
+    if (!valid || createMutation.isPending) return;
+    createMutation.mutate(
+      { name: name.trim(), email: email.trim(), username: username.trim(), password: pw, role },
+      {
+        onSuccess: () => {
+          toast.ok(`Usuario "${name}" creado.`);
+          close();
+        },
+        onError: onMutationError,
+      },
+    );
   };
 
   return (
@@ -129,7 +151,9 @@ export function CreateUserModal({ onClose }) {
         </div>
         <div className="flex justify-end gap-2 px-[22px] py-3.5 border-t border-border bg-surface-2">
           <Button variant="ghost" onClick={close}>Cancelar</Button>
-          <Button variant="primary" onClick={close}>Crear usuario</Button>
+          <Button variant="primary" onClick={submit} disabled={!valid || createMutation.isPending}>
+            {createMutation.isPending ? "Creando…" : "Crear usuario"}
+          </Button>
         </div>
       </div>
     </Overlay>

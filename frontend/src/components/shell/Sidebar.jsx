@@ -1,9 +1,15 @@
 import { NavLink } from "react-router-dom";
+import { useSessions } from "../../hooks/api/useSessions.js";
 
 // Dark left rail: brand block + role-aware nav + Baileys status card at the
 // bottom. Pure presentational — nav items are passed in.
 
 export function Sidebar({ isAdmin, nav }) {
+  // Contador de sesiones en vivo. Si el backend está caído, fallback a "—".
+  const { data: sessions = [] } = useSessions();
+  const total = sessions.length;
+  const connected = sessions.filter((s) => s.status === "Conectado").length;
+
   return (
     <aside
       className="flex flex-col"
@@ -71,16 +77,27 @@ export function Sidebar({ isAdmin, nav }) {
           </div>
           <div className="flex items-baseline gap-1.5" style={{ marginTop: 6 }}>
             <span className="mono" style={{ fontSize: 20, fontWeight: 500, color: "#F4F1EA" }}>
-              3
+              {connected}
             </span>
             <span className="text-[11px]" style={{ color: "#8A8780" }}>
-              de 3 conectadas
+              de {total} conectada{total === 1 ? "" : "s"}
             </span>
           </div>
           <div className="flex gap-[3px]" style={{ marginTop: 8 }}>
-            {[1, 1, 1].map((v, i) => (
-              <span key={i} style={{ flex: 1, height: 4, background: v ? "var(--accent)" : "#363330" }} />
-            ))}
+            {sessions.length === 0 ? (
+              <span style={{ flex: 1, height: 4, background: "#363330" }} />
+            ) : (
+              sessions.map((s) => (
+                <span
+                  key={s.id}
+                  style={{
+                    flex: 1,
+                    height: 4,
+                    background: s.status === "Conectado" ? "var(--accent)" : "#363330",
+                  }}
+                />
+              ))
+            )}
           </div>
         </div>
       </div>

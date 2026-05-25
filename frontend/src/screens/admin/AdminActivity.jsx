@@ -3,12 +3,10 @@ import { Button } from "../../components/ui/Button.jsx";
 import { Input } from "../../components/ui/Input.jsx";
 import { Badge } from "../../components/ui/Badge.jsx";
 import { I } from "../../components/Icons.jsx";
+import { useActivity } from "../../hooks/api/useActivity.js";
 import { useToast } from "../../lib/toast.jsx";
-import { ACTIVITY } from "../../lib/data.js";
+import { timeOfDay } from "../../lib/format.js";
 import { FiltersModal } from "../../modals";
-
-// `todayOnly` is decorative for now — todos los mocks son "hoy" — pero el
-// toggle se queda porque va a ir contra el backend.
 
 const FILTER_FIELDS = [
   {
@@ -40,17 +38,37 @@ export function AdminActivity() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [todayOnly, setTodayOnly] = useState(false);
 
-  const rows = ACTIVITY.filter((a) => {
-    if (filters.level && a.level !== filters.level) return false;
-    if (filters.scope === "system" && a.user !== "system") return false;
-    if (filters.scope === "user" && a.user === "system") return false;
-    if (q && !`${a.user} ${a.action} ${a.target} ${a.detail}`.toLowerCase().includes(q.toLowerCase())) return false;
-    return true;
+  // Pasamos los filtros al hook para que el backend haga el match.
+  const activityQuery = useActivity({
+    level: filters.level,
+    scope: filters.scope,
+    q: q || undefined,
+    take: 200,
   });
+  const rows = activityQuery.data ?? [];
+  // todayOnly filtra del lado del cliente porque el backend aún no lo expone
+  // como parámetro; cuando lo añadamos pasa al hook.
+  const visible = todayOnly
+    ? rows.filter((r) => {
+        const d = new Date(r.createdAt);
+        const today = new Date();
+        return d.toDateString() === today.toDateString();
+      })
+    : rows;
 
   const exportLog = () => {
     const header = ["hora", "usuario", "accion", "recurso", "detalle", "nivel"];
-    const csv = [header, ...rows.map((a) => [a.t, a.user, a.action, a.target, a.detail, a.level])]
+    const csv = [
+      header,
+      ...visible.map((a) => [
+        timeOfDay(a.createdAt),
+        a.user?.username ?? "system",
+        a.action,
+        a.target ?? "",
+        a.detail ?? "",
+        a.level,
+      ]),
+    ]
       .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
       .join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -60,7 +78,7 @@ export function AdminActivity() {
     a.download = `actividad_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.ok(`Exportados ${rows.length} registros.`);
+    toast.ok(`Exportados ${visible.length} registros.`);
   };
 
   return (
@@ -84,7 +102,7 @@ export function AdminActivity() {
         onExport={exportLog}
       />
 
-      <LogTable rows={rows} />
+      <LogTable rows={visible} loading={activityQuery.isLoading} error={activityQuery.isError} onRetry={() => activityQuery.refetch()} />
 
       {filtersOpen && (
         <FiltersModal
@@ -121,7 +139,7 @@ function Toolbar({ q, setQ, todayOnly, setTodayOnly, levelLabel, onFilters, onEx
   );
 }
 
-function LogTable({ rows }) {
+function LogTable({ rows, loading, error, onRetry }) {
   return (
     <div className="bg-surface" style={{ border: "1px solid var(--border)" }}>
       <div
@@ -139,14 +157,25 @@ function LogTable({ rows }) {
         <span>Detalle</span>
         <span className="text-right">Nivel</span>
       </div>
-      {rows.length === 0 ? (
+      {loading ? (
+        <div className="text-center text-muted text-[13px]" style={{ padding: "32px" }}>
+          Cargando actividad…
+        </div>
+      ) : error ? (
+        <div className="text-center" style={{ padding: "32px" }}>
+          <div className="text-[13px] text-danger">No se pudo cargar la actividad.</div>
+          <div className="mt-3">
+            <Button size="sm" variant="ghost" onClick={onRetry}>Reintentar</Button>
+          </div>
+        </div>
+      ) : rows.length === 0 ? (
         <div className="text-center text-muted text-[13px]" style={{ padding: "32px" }}>
           Ningún registro coincide con los filtros aplicados.
         </div>
       ) : (
         rows.map((a, i) => (
           <div
-            key={i}
+            key={a.id}
             className="grid items-center"
             style={{
               gridTemplateColumns: "90px 110px 160px 1fr 90px",
@@ -154,17 +183,15 @@ function LogTable({ rows }) {
               borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none",
             }}
           >
-            <span className="mono text-xs text-muted">{a.t}</span>
-            <span className="mono text-xs">{a.user}</span>
+            <span className="mono text-xs text-muted">{timeOfDay(a.createdAt)}</span>
+            <span className="mono text-xs">{a.user?.username ?? "system"}</span>
             <span className="mono text-xs text-ink-2">{a.action}</span>
             <div className="text-[13px] flex gap-2.5 items-baseline">
-              <span className="mono text-[11px] text-muted">{a.target}</span>
-              <span>{a.detail}</span>
+              <span className="mono text-[11px] text-muted">{a.target ?? "—"}</span>
+              <span>{a.detail ?? ""}</span>
             </div>
             <div className="text-right">
-              <Badge
-                tone={a.level === "err" ? "danger" : a.level === "warn" ? "warn" : a.level === "info" ? "info" : "neutral"}
-              >
+              <Badge tone={a.level === "err" ? "danger" : a.level === "warn" ? "warn" : a.level === "info" ? "info" : "neutral"}>
                 {a.level.toUpperCase()}
               </Badge>
             </div>

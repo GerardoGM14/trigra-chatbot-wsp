@@ -9,7 +9,16 @@ import { Stat } from "../components/ui/Stat.jsx";
 import { Avatar } from "../components/ui/Avatar.jsx";
 import { ModalShell } from "../components/overlays/ModalShell.jsx";
 import { FakeQR } from "../screens/shared/FakeQR.jsx";
-import { ALL_OPERATORS } from "../lib/data.js";
+import { useUsers } from "../hooks/api/useUsers.js";
+
+// Normaliza los usuarios del backend al shape antiguo `{ u, name, role, campaigns }`
+// que ya consumen las sub-vistas — así el resto del archivo no cambia.
+function useOperators() {
+  const { data = [] } = useUsers();
+  return data
+    .filter((u) => u.status === "Activo")
+    .map((u) => ({ u: u.username, name: u.name, role: u.role, campaigns: 0 }));
+}
 
 // Five different actions, all rooted on the same "session". Each sub-component
 // is its own modal — we just route based on `action`. Keeping them in one file
@@ -26,10 +35,11 @@ export function SessionActionModal({ action, session, onClose, onApply }) {
 }
 
 function Assign({ session, onClose, onApply }) {
+  const operators = useOperators();
   const [picked, setPicked] = useState(session.ops || []);
   const [search, setSearch] = useState("");
   const toggle = (u) => setPicked((p) => (p.includes(u) ? p.filter((x) => x !== u) : [...p, u]));
-  const visible = ALL_OPERATORS.filter(
+  const visible = operators.filter(
     (o) => !search || o.name.toLowerCase().includes(search.toLowerCase()) || o.u.includes(search.toLowerCase()),
   );
   return (
@@ -96,8 +106,9 @@ function Assign({ session, onClose, onApply }) {
 }
 
 function Exclusive({ session, onClose, onApply }) {
+  const operators = useOperators();
   const [exclusive, setExclusive] = useState(false);
-  const [owner, setOwner] = useState((session.ops && session.ops[0]) || "maria.q");
+  const [owner, setOwner] = useState((session.ops && session.ops[0]) || operators[0]?.u || "");
   return (
     <ModalShell
       title={`Modo exclusivo · ${session.id}`}
@@ -136,7 +147,7 @@ function Exclusive({ session, onClose, onApply }) {
         {exclusive && (
           <Field label="Operador con acceso exclusivo" hint="Solo este usuario podrá enviar desde la sesión.">
             <Select value={owner} onChange={(e) => setOwner(e.target.value)}>
-              {ALL_OPERATORS.map((o) => (
+              {operators.map((o) => (
                 <option key={o.u} value={o.u}>{o.name} · @{o.u}</option>
               ))}
             </Select>

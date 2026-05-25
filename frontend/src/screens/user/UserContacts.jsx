@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/ui/Button.jsx";
 import { Input } from "../../components/ui/Input.jsx";
@@ -8,32 +8,48 @@ import { Stat } from "../../components/ui/Stat.jsx";
 import { Table } from "../../components/ui/Table.jsx";
 import { Menu } from "../../components/overlays/Menu.jsx";
 import { I } from "../../components/Icons.jsx";
+import { useGroups, useDeleteGroup } from "../../hooks/api/useGroups.js";
+import { useContacts, useDeleteContact } from "../../hooks/api/useContacts.js";
+import { useMutationError } from "../../hooks/useMutationFeedback.js";
 import { useToast } from "../../lib/toast.jsx";
-import { GROUPS, CONTACTS_PREVIEW } from "../../lib/data.js";
-import { newGroupId } from "../../lib/ids.js";
+import { num } from "../../lib/format.js";
 import { ImportCsvModal, NewGroupModal, EditGroupModal, ConfirmModal } from "../../modals";
 
 export function UserContacts() {
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [groups, setGroups] = useState(GROUPS);
-  const [active, setActive] = useState("grp_clientes_a");
+  const onMutationError = useMutationError();
+
+  const groupsQuery = useGroups();
+  const deleteGroupMutation = useDeleteGroup();
+  const deleteContactMutation = useDeleteContact();
+
+  const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data]);
+  const [activeId, setActiveId] = useState(null);
+
+  // Cuando llegan los grupos por primera vez, elegimos el primero.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!activeId && groups.length > 0) setActiveId(groups[0].id);
+  }, [activeId, groups]);
+
+  const activeGroup = groups.find((g) => g.id === activeId);
+
   const [showImport, setShowImport] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showEditGroup, setShowEditGroup] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [contactQuery, setContactQuery] = useState("");
-  const g = groups.find((x) => x.id === active) || groups[0];
 
-  const visibleContacts = CONTACTS_PREVIEW.filter(
-    (c) =>
-      !contactQuery ||
-      c.name.toLowerCase().includes(contactQuery.toLowerCase()) ||
-      c.phone.replace(/\s/g, "").includes(contactQuery.replace(/\s/g, "")),
-  );
+  const contactsQuery = useContacts({
+    groupId: activeId,
+    q: contactQuery || undefined,
+    take: 100,
+  });
+  const contacts = contactsQuery.data?.rows ?? [];
 
   const startCampaignWithGroup = () => {
-    toast.ok(`Audiencia "${g.name}" preseleccionada en la nueva campaña.`);
+    toast.ok(`Audiencia "${activeGroup?.name ?? ""}" preseleccionada en la nueva campaña.`);
     navigate("/u/campaigns?compose=1");
   };
 
@@ -42,72 +58,91 @@ export function UserContacts() {
       <Header onImport={() => setShowImport(true)} onNew={() => setShowNew(true)} />
 
       <div className="grid gap-3 items-start" style={{ gridTemplateColumns: "320px 1fr" }}>
-        <GroupSidebar groups={groups} active={active} onSelect={setActive} onNew={() => setShowNew(true)} />
+        <GroupSidebar
+          groups={groups}
+          loading={groupsQuery.isLoading}
+          active={activeId}
+          onSelect={setActiveId}
+          onNew={() => setShowNew(true)}
+        />
         <div className="grid gap-3">
-          <KpiRow g={g} />
-          <ContactsPanel
-            g={g}
-            contactQuery={contactQuery}
-            setContactQuery={setContactQuery}
-            visibleContacts={visibleContacts}
-            onEditGroup={() => setShowEditGroup(true)}
-            onStartCampaign={startCampaignWithGroup}
-            onExport={() => toast.ok(`Exportando ${g.name}…`)}
-            onImport={() => setShowImport(true)}
-            onValidate={() => toast.info("Validación en cola.")}
-            onDeleteGroup={() => setConfirmDelete(g)}
-            onContactAction={(label) => toast.ok(label)}
-          />
+          {activeGroup ? (
+            <>
+              <KpiRow g={activeGroup} />
+              <ContactsPanel
+                g={activeGroup}
+                contactQuery={contactQuery}
+                setContactQuery={setContactQuery}
+                visibleContacts={contacts}
+                loading={contactsQuery.isLoading}
+                onEditGroup={() => setShowEditGroup(true)}
+                onStartCampaign={startCampaignWithGroup}
+                onExport={() => toast.ok(`Exportando ${activeGroup.name}…`)}
+                onImport={() => setShowImport(true)}
+                onValidate={() => toast.info("Validación en cola.")}
+                onDeleteGroup={() => setConfirmDelete(activeGroup)}
+                onContactAction={(label) => toast.ok(label)}
+                onDeleteContact={(c) =>
+                  deleteContactMutation.mutate(c.id, {
+                    onSuccess: () => toast.warn(`${c.name ?? c.phone} eliminado.`),
+                    onError: onMutationError,
+                  })
+                }
+              />
+            </>
+          ) : (
+            <div className="text-muted text-[13px] text-center bg-surface" style={{ padding: 32, border: "1px solid var(--border)" }}>
+              {groupsQuery.isLoading
+                ? "Cargando grupos…"
+                : groupsQuery.isError
+                  ? "No se pudieron cargar los grupos."
+                  : "Selecciona o crea un grupo a la izquierda."}
+            </div>
+          )}
         </div>
       </div>
 
       {showImport && (
         <ImportCsvModal
           onClose={() => setShowImport(false)}
-          onDone={(r) => {
-            const id = newGroupId();
-            setGroups((list) => [
-              { id, name: r.groupName, count: r.count, tag: "Importado", updated: "hace 1 min" },
-              ...list,
-            ]);
-            setActive(id);
-            toast.ok(`Importados ${r.count.toLocaleString("es-PE")} contactos a "${r.groupName}".`);
+          onDone={() => {
+            // El modal real hace POST a /api/groups/import-csv (no implementado
+            // todavía en el backend; lo dejamos como toast por ahora).
+            toast.ok("Importación en cola.");
+            groupsQuery.refetch();
           }}
         />
       )}
       {showNew && (
         <NewGroupModal
           onClose={() => setShowNew(false)}
-          onCreate={(r) => {
-            const id = newGroupId();
-            setGroups((list) => [{ id, name: r.name, count: 0, tag: r.tag, updated: "hace 1 min" }, ...list]);
-            setActive(id);
-            toast.ok(`Grupo "${r.name}" creado.`);
+          onCreated={(g) => {
+            setActiveId(g.id);
           }}
         />
       )}
-      {showEditGroup && (
+      {showEditGroup && activeGroup && (
         <EditGroupModal
-          group={g}
+          group={activeGroup}
           onClose={() => setShowEditGroup(false)}
-          onSave={(next) => {
-            setGroups((list) => list.map((x) => (x.id === next.id ? next : x)));
-            toast.ok(`Grupo "${next.name}" actualizado.`);
-          }}
         />
       )}
       {confirmDelete && (
         <ConfirmModal
           title="Eliminar grupo"
-          message={`Vas a eliminar "${confirmDelete.name}" con ${confirmDelete.count.toLocaleString("es-PE")} contactos. Los contactos no se borran de tu cuenta, solo este agrupamiento.`}
+          message={`Vas a eliminar "${confirmDelete.name}" con ${num(confirmDelete.count)} contactos. Los contactos no se borran de tu cuenta, solo este agrupamiento.`}
           confirmLabel="Eliminar grupo"
           tone="danger"
           onClose={() => setConfirmDelete(null)}
-          onConfirm={() => {
-            setGroups((list) => list.filter((x) => x.id !== confirmDelete.id));
-            if (active === confirmDelete.id) setActive(groups.find((x) => x.id !== confirmDelete.id)?.id);
-            toast.warn(`Grupo "${confirmDelete.name}" eliminado.`);
-          }}
+          onConfirm={() =>
+            deleteGroupMutation.mutate(confirmDelete.id, {
+              onSuccess: () => {
+                toast.warn(`Grupo "${confirmDelete.name}" eliminado.`);
+                if (activeId === confirmDelete.id) setActiveId(null);
+              },
+              onError: onMutationError,
+            })
+          }
         />
       )}
     </div>
@@ -131,7 +166,7 @@ function Header({ onImport, onNew }) {
   );
 }
 
-function GroupSidebar({ groups, active, onSelect, onNew }) {
+function GroupSidebar({ groups, loading, active, onSelect, onNew }) {
   return (
     <Panel
       title="Grupos"
@@ -139,35 +174,40 @@ function GroupSidebar({ groups, active, onSelect, onNew }) {
       action={<Button size="sm" variant="ghost" icon={<I.plus size={12} />} onClick={onNew} />}
     >
       <div>
-        {groups.map((gr, i) => (
-          <button
-            key={gr.id}
-            onClick={() => onSelect(gr.id)}
-            className="w-full text-left flex items-center gap-2.5 cursor-pointer border-none"
-            style={{
-              padding: "12px 18px",
-              borderTop: i > 0 ? "1px solid var(--border)" : "none",
-              background: active === gr.id ? "var(--surface-2)" : "transparent",
-            }}
-          >
-            <span
-              className="self-stretch"
-              style={{ width: 4, background: active === gr.id ? "var(--accent)" : "transparent" }}
-            />
-            <div className="flex-1 min-w-0">
-              <div
-                className="text-[13px] font-medium"
-                style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-              >
-                {gr.name}
+        {loading ? (
+          <div className="text-muted text-[13px] text-center" style={{ padding: "20px 0" }}>Cargando…</div>
+        ) : groups.length === 0 ? (
+          <div className="text-muted text-[13px] text-center" style={{ padding: "20px 0" }}>
+            Sin grupos. Crea el primero.
+          </div>
+        ) : (
+          groups.map((gr, i) => (
+            <button
+              key={gr.id}
+              onClick={() => onSelect(gr.id)}
+              className="w-full text-left flex items-center gap-2.5 cursor-pointer border-none"
+              style={{
+                padding: "12px 18px",
+                borderTop: i > 0 ? "1px solid var(--border)" : "none",
+                background: active === gr.id ? "var(--surface-2)" : "transparent",
+              }}
+            >
+              <span
+                className="self-stretch"
+                style={{ width: 4, background: active === gr.id ? "var(--accent)" : "transparent" }}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-medium" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {gr.name}
+                </div>
+                <div className="text-[11px] text-muted mt-0.5">
+                  {gr.tag}
+                </div>
               </div>
-              <div className="text-[11px] text-muted mt-0.5">
-                {gr.tag} · actualizado {gr.updated}
-              </div>
-            </div>
-            <span className="mono text-xs text-muted">{gr.count.toLocaleString("es-PE")}</span>
-          </button>
-        ))}
+              <span className="mono text-xs text-muted">{num(gr.count)}</span>
+            </button>
+          ))
+        )}
       </div>
     </Panel>
   );
@@ -176,22 +216,23 @@ function GroupSidebar({ groups, active, onSelect, onNew }) {
 function KpiRow({ g }) {
   return (
     <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
-      <Stat label="Contactos" value={g.count.toLocaleString("es-PE")} />
-      <Stat label="Válidos WSP" value="98,7%" sub="11 inválidos" />
-      <Stat label="Opt-out" value="3" sub="Excluidos automáticamente" />
-      <Stat label="Últ. campaña" value="62%" sub="Tasa de apertura" />
+      <Stat label="Contactos" value={num(g.count)} />
+      <Stat label="Válidos WSP" value="—" sub="Pronto" />
+      <Stat label="Opt-out" value="—" sub="Pronto" />
+      <Stat label="Últ. campaña" value="—" sub="Pronto" />
     </div>
   );
 }
 
 function ContactsPanel({
-  g, contactQuery, setContactQuery, visibleContacts,
-  onEditGroup, onStartCampaign, onExport, onImport, onValidate, onDeleteGroup, onContactAction,
+  g, contactQuery, setContactQuery, visibleContacts, loading,
+  onEditGroup, onStartCampaign, onExport, onImport, onValidate, onDeleteGroup,
+  onContactAction, onDeleteContact,
 }) {
   return (
     <Panel
       title={g.name}
-      subtitle={`${g.count.toLocaleString("es-PE")} contactos · etiqueta ${g.tag}`}
+      subtitle={`${num(g.count)} contactos · etiqueta ${g.tag}`}
       action={
         <div className="flex gap-1.5">
           <Button size="sm" variant="ghost" icon={<I.edit size={12} />} onClick={onEditGroup}>Editar grupo</Button>
@@ -225,16 +266,23 @@ function ContactsPanel({
           Etiquetas
         </Button>
       </div>
-      <Table columns={buildColumns(onContactAction)} rows={visibleContacts} />
+      {loading ? (
+        <div className="text-muted text-[13px] text-center" style={{ padding: "24px 0" }}>Cargando contactos…</div>
+      ) : visibleContacts.length === 0 ? (
+        <div className="text-muted text-[13px] text-center" style={{ padding: "24px 0" }}>
+          Sin contactos en este grupo todavía.
+        </div>
+      ) : (
+        <Table columns={buildColumns(onContactAction, onDeleteContact)} rows={visibleContacts} />
+      )}
       <div className="flex justify-between text-xs text-muted" style={{ padding: "12px 0 0" }}>
-        <span>Mostrando {visibleContacts.length} de {g.count.toLocaleString("es-PE")}</span>
-        <span>Página 1 de {Math.max(1, Math.ceil(g.count / 6))}</span>
+        <span>Mostrando {visibleContacts.length} de {num(g.count)}</span>
       </div>
     </Panel>
   );
 }
 
-function buildColumns(onContactAction) {
+function buildColumns(onContactAction, onDeleteContact) {
   return [
     {
       label: "",
@@ -243,21 +291,21 @@ function buildColumns(onContactAction) {
       ),
     },
     { label: "Número", render: (r) => <span className="mono text-[13px]">{r.phone}</span> },
-    { label: "Nombre", render: (r) => <span className="text-[13px] font-medium">{r.name}</span> },
+    { label: "Nombre", render: (r) => <span className="text-[13px] font-medium">{r.name ?? "—"}</span> },
     {
       label: "Etiquetas",
       render: (r) => (
         <div className="flex gap-1 flex-wrap">
-          {r.tags.map((t) => <Badge key={t} tone="neutral">{t}</Badge>)}
+          {(r.tags ?? []).map((t) => <Badge key={t} tone="neutral">{t}</Badge>)}
         </div>
       ),
     },
     {
       label: "Estado",
-      render: () => (
-        <Badge tone="info">
+      render: (r) => (
+        <Badge tone={r.optedOut ? "warn" : "info"}>
           <span style={{ width: 6, height: 6, background: "currentColor", display: "inline-block" }} />
-          Válido
+          {r.optedOut ? "Opt-out" : "Válido"}
         </Badge>
       ),
     },
@@ -267,9 +315,9 @@ function buildColumns(onContactAction) {
       render: (r) => (
         <Menu
           items={[
-            { label: "Enviar mensaje directo", icon: <I.send size={12} />, onClick: () => onContactAction(`Abriendo chat con ${r.name}…`) },
-            { label: "Editar contacto", icon: <I.edit size={12} />, onClick: () => onContactAction(`Edición de ${r.name} (pendiente)`) },
-            { label: "Quitar del grupo", icon: <I.x size={12} />, onClick: () => onContactAction(`${r.name} quitado del grupo.`) },
+            { label: "Enviar mensaje directo", icon: <I.send size={12} />, onClick: () => onContactAction(`Abriendo chat con ${r.name ?? r.phone}…`) },
+            { label: "Editar contacto", icon: <I.edit size={12} />, onClick: () => onContactAction(`Edición (pronto)`) },
+            { label: "Quitar del grupo", icon: <I.x size={12} />, onClick: () => onDeleteContact(r) },
           ]}
         />
       ),
