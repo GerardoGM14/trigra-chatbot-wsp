@@ -306,11 +306,47 @@ useLocation().pathname changes
 
 ---
 
-## Mock data
+## Talking to the backend
 
-`lib/data.js` exports the constants that feed the screens: `USERS`, `ACTIVITY`, `CAMPAIGNS`, `GROUPS`, `TEMPLATES`, `CONTACTS_PREVIEW`, `HOURLY`, `ALL_OPERATORS`.
+The frontend talks to the Fastify backend through a tiny HTTP client
+(`lib/apiClient.js`) and a set of TanStack Query hooks (`hooks/api/*`).
 
-When the backend exists, **the object shape doesn't change** — the constants will simply be replaced by hooks like `useCampaigns()` that call the API.
+```
+Component
+   │
+   └─► useUsers() / useCampaigns() / …      (hooks/api)
+              │
+              └─► api.get/post/patch/delete  (lib/apiClient.js)
+                       │
+                       ├─ adjuntar JWT (Bearer)
+                       ├─ parse JSON / throw ApiError
+                       └─► VITE_API_URL + /api/...   (Fastify)
+```
+
+### Available API hooks
+
+```js
+// hooks/api/useUsers.js     → useUsers, useUser, useCreateUser, useUpdateUser, useDeleteUser
+// hooks/api/useGroups.js    → useGroups, useCreateGroup, useUpdateGroup, useDeleteGroup
+// hooks/api/useContacts.js  → useContacts, useCreateContact, useDeleteContact
+// hooks/api/useTemplates.js → useTemplates, useCreateTemplate, useUpdateTemplate, useDeleteTemplate
+// hooks/api/useCampaigns.js → useCampaigns, useCampaign, useCreateCampaign, useDeleteCampaign, useCampaignAction
+// hooks/api/useActivity.js  → useActivity
+// hooks/api/useSessions.js  → useSessions, useAssignSession, useSessionExclusive, useRestartSession, useDeleteSession
+```
+
+### Realtime (Socket.IO)
+
+`useRealtimeUpdates()` se monta en el subárbol autenticado y escucha eventos
+`session:*` y `campaign:*` del backend para invalidar las queries y refrescar
+la UI en vivo.
+
+### Auth
+
+`lib/auth.jsx` mantiene el `user` en context y persiste el JWT en
+`localStorage`. Al recargar la página, `/auth/me` valida el token contra el
+backend; si caducó (`401`), el cliente HTTP dispara `auth:expired` y el
+contexto limpia la sesión.
 
 ---
 

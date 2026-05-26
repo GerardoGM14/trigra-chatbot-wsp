@@ -306,11 +306,47 @@ useLocation().pathname cambia
 
 ---
 
-## Datos mock
+## Comunicación con el backend
 
-`lib/data.js` exporta las constantes que alimentan las pantallas: `USERS`, `ACTIVITY`, `CAMPAIGNS`, `GROUPS`, `TEMPLATES`, `CONTACTS_PREVIEW`, `HOURLY`, `ALL_OPERATORS`.
+El frontend habla con el backend Fastify a través de un cliente HTTP minimalista
+(`lib/apiClient.js`) y un set de hooks de TanStack Query (`hooks/api/*`).
 
-Cuando el backend exista, **el shape de los objetos no cambia** — solo se reemplazan las constantes por hooks tipo `useCampaigns()` que llaman al API.
+```
+Componente
+   │
+   └─► useUsers() / useCampaigns() / …      (hooks/api)
+              │
+              └─► api.get/post/patch/delete  (lib/apiClient.js)
+                       │
+                       ├─ adjuntar JWT (Bearer)
+                       ├─ parsear JSON / lanzar ApiError
+                       └─► VITE_API_URL + /api/...   (Fastify)
+```
+
+### Hooks de API disponibles
+
+```js
+// hooks/api/useUsers.js     → useUsers, useUser, useCreateUser, useUpdateUser, useDeleteUser
+// hooks/api/useGroups.js    → useGroups, useCreateGroup, useUpdateGroup, useDeleteGroup
+// hooks/api/useContacts.js  → useContacts, useCreateContact, useDeleteContact
+// hooks/api/useTemplates.js → useTemplates, useCreateTemplate, useUpdateTemplate, useDeleteTemplate
+// hooks/api/useCampaigns.js → useCampaigns, useCampaign, useCreateCampaign, useDeleteCampaign, useCampaignAction
+// hooks/api/useActivity.js  → useActivity
+// hooks/api/useSessions.js  → useSessions, useAssignSession, useSessionExclusive, useRestartSession, useDeleteSession
+```
+
+### Tiempo real (Socket.IO)
+
+`useRealtimeUpdates()` se monta en el subárbol autenticado y escucha eventos
+`session:*` y `campaign:*` del backend para invalidar las queries y refrescar
+la UI en vivo.
+
+### Auth
+
+`lib/auth.jsx` mantiene al `user` en contexto y persiste el JWT en
+`localStorage`. Al recargar la página, `/auth/me` valida el token contra el
+backend; si caducó (`401`), el cliente HTTP dispara `auth:expired` y el
+contexto limpia la sesión.
 
 ---
 

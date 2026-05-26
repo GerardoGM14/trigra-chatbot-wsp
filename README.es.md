@@ -14,34 +14,44 @@ app-chatbot/
 
 | Módulo | Estado |
 |---|---|
-| Frontend | ✅ Funcional con datos mock — ver [`frontend/README.es.md`](frontend/README.es.md) |
-| Backend | ✅ Scaffold con API REST + colas — ver [`backend/README.es.md`](backend/README.es.md) |
-| Baileys (WhatsApp) | ⏳ Estructura lista, conexión real pendiente |
-| Frontend ↔ Backend | ⏳ Integración pendiente — hoy corren por separado |
+| Frontend | ✅ Conectado al backend — ver [`frontend/README.es.md`](frontend/README.es.md) |
+| Backend | ✅ API REST + colas + tiempo real — ver [`backend/README.es.md`](backend/README.es.md) |
+| Frontend ↔ Backend | ✅ Integrado con TanStack Query + Socket.IO |
+| Baileys (WhatsApp) | ⏳ Estructura lista, conexión real a WhatsApp pendiente |
 | Firebase Hosting | ✅ Configurado — `cd frontend && npm run deploy` |
 | Despliegue VPS | ⏳ Pendiente |
 
 ## Cómo arrancar en local
 
-**Frontend** (con datos mock, no necesita backend):
+Necesitas **ambos** procesos corriendo. Arranca el backend primero:
 
 ```bash
-cd frontend
-npm install
-npm run dev          # http://localhost:5173
-```
-
-**Backend** (requiere Docker para Postgres + Redis):
-
-```bash
+# Terminal 1 — backend
 cd backend
 cp .env.example .env
-docker compose up -d
+docker compose up -d            # Postgres + Redis
 npm install
-npm run prisma:migrate
-npm run db:seed
-npm run dev          # http://localhost:3001
+npm run prisma:migrate          # crea las tablas
+npm run db:seed                 # carga datos de prueba
+npm run dev                     # http://localhost:3001
 ```
+
+Luego el frontend:
+
+```bash
+# Terminal 2 — frontend
+cd frontend
+cp .env.example .env.local      # luego rellena Firebase + VITE_API_URL
+npm install
+npm run dev                     # http://localhost:5173
+```
+
+Abre `http://localhost:5173` e inicia sesión con:
+
+- **admin / demo1234** → vista de administrador
+- **maria.q / demo1234** → vista de operador
+
+(Cualquier usuario del seed funciona con la contraseña `demo1234`.)
 
 Más detalles, arquitectura y diagramas en el README de cada módulo.
 
