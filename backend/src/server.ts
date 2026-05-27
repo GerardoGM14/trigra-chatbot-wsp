@@ -1,9 +1,10 @@
 // Entrypoint: construye la app, monta Socket.IO encima del mismo HTTP server,
-// arranca BullMQ workers y enciende el listener.
+// arranca BullMQ workers, resume sesiones Baileys persistidas y enciende el listener.
 import { buildApp } from "./app.js";
 import { env } from "./config/env.js";
 import { attachRealtime } from "./realtime/io.js";
 import { startWorkers } from "./queues/workers.js";
+import { resumeAllSessions } from "./baileys/index.js";
 
 async function main() {
   const app = await buildApp();
@@ -19,6 +20,11 @@ async function main() {
   try {
     await app.listen({ port: env.PORT, host: env.HOST });
     app.log.info(`✓ backend ready at http://${env.HOST}:${env.PORT}`);
+
+    // Resume sesiones Baileys persistidas en disco. Lo hacemos DESPUÉS de
+    // listen() para que /health responda durante la reconexión (puede tomar
+    // varios segundos por sesión). Fire-and-forget; los errores se loguean.
+    resumeAllSessions().catch((err) => app.log.error({ err }, "resumeAllSessions failed"));
   } catch (err) {
     app.log.error(err, "failed to start server");
     process.exit(1);
