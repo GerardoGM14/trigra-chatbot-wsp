@@ -4,68 +4,75 @@ import { Button } from "../components/ui/Button.jsx";
 import { Field } from "../components/ui/Field.jsx";
 import { Input } from "../components/ui/Input.jsx";
 import { Overlay } from "../components/overlays/Overlay.jsx";
-import { FakeQR } from "../screens/shared/FakeQR.jsx";
+import { useCreateSession } from "../hooks/api/useSessions.js";
+import { useSessionQR } from "../hooks/useSessionQR.js";
+import { useMutationError } from "../hooks/useMutationFeedback.js";
 
-// 3-step wizard for linking a new WhatsApp session.
-//   1. Name the device.
-//   2. Scan the QR (auto-refreshes every 45s, fake "connected" after ~12s).
-//   3. Confirmation + finish.
+// Wizard de vinculación de un nuevo número WhatsApp.
+//   1. Identificar el dispositivo (nombre, opcional número)
+//   2. El backend arranca Baileys, emite QR por Socket.IO; el wizard lo muestra
+//   3. Cuando WhatsApp confirma, mostramos pantalla de éxito
 //
-// No onBackdropClick on the Overlay: a multi-step flow shouldn't discard
-// progress on a stray click outside — close only via X or Cancelar.
+// Sin onBackdropClick: un wizard no debería descartar progreso por un clic
+// fuera — cerrar solo vía X o Cancelar.
 
 export function BaileysWizard({ onClose, onConnect }) {
+  const onError = useMutationError("No se pudo iniciar la sesión.");
+  const createMutation = useCreateSession();
+
   const [step, setStep] = useState(1);
   const [name, setName] = useState("Mi celular");
   const [num, setNum] = useState("");
-  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 9999));
-  const [secondsLeft, setSecondsLeft] = useState(45);
   const [closing, setClosing] = useState(false);
+  // El slug de la sesión creada; se llena al pasar al paso 2.
+  const [sessionSlug, setSessionSlug] = useState(null);
 
-  useEffect(() => {
-    if (step !== 2) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSecondsLeft(45);
-    const i = setInterval(
-      () =>
-        setSecondsLeft((s) => {
-          if (s <= 1) {
-            setSeed(Math.floor(Math.random() * 9999));
-            return 45;
-          }
-          return s - 1;
-        }),
-      1000,
-    );
-    const t = setTimeout(() => {
-      const fakeNum = num || `+51 9${Math.floor(10000000 + Math.random() * 89999999)}`;
-      setNum(fakeNum);
+  // Hook de tiempo real: emite QR + cambios de estado.
+  const { qr, status, expiresAt } = useSessionQR(sessionSlug, {
+    onConnected: (payload) => {
+      // Cuando WhatsApp confirma, capturamos el número real y avanzamos al paso 3.
+      if (payload.phoneNumber) setNum(payload.phoneNumber);
       setStep(3);
-    }, 12000);
-    return () => {
-      clearInterval(i);
-      clearTimeout(t);
+    },
+  });
+
+  // Cuenta atrás visible del QR (45s). Solo decorativo — Baileys emite uno nuevo
+  // automáticamente cuando expira, y `qr` se reemplaza con el nuevo data URL.
+  const [secondsLeft, setSecondsLeft] = useState(45);
+  useEffect(() => {
+    if (step !== 2 || !expiresAt) return undefined;
+    const tick = () => {
+      const remaining = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+      setSecondsLeft(remaining);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
+    tick();
+    const i = setInterval(tick, 1000);
+    return () => clearInterval(i);
+  }, [step, expiresAt]);
 
   const close = () => {
     setClosing(true);
     setTimeout(() => onClose(), 180);
   };
 
+  // Paso 1 → 2: crea la sesión en el backend, que arranca Baileys y empieza
+  // a emitir QRs.
+  const generateQR = () => {
+    if (createMutation.isPending) return;
+    createMutation.mutate(
+      {},
+      {
+        onSuccess: (session) => {
+          setSessionSlug(session.slug);
+          setStep(2);
+        },
+        onError,
+      },
+    );
+  };
+
   const finish = () => {
-    const fakeNum = num || `+51 9${Math.floor(10000000 + Math.random() * 89999999)}`;
-    onConnect({
-      id: "sess_" + Math.random().toString(36).slice(2, 8),
-      num: fakeNum,
-      status: "Conectado",
-      quality: "Alta",
-      battery: 92,
-      since: "00:00:04",
-      platform: name,
-      primary: false,
-    });
+    onConnect({ slug: sessionSlug, num, status });
   };
 
   return (
@@ -97,7 +104,7 @@ export function BaileysWizard({ onClose, onConnect }) {
 
         <div className="p-6" style={{ minHeight: 340 }}>
           {step === 1 && <Step1 name={name} setName={setName} num={num} setNum={setNum} />}
-          {step === 2 && <Step2 seed={seed} setSeed={setSeed} secondsLeft={secondsLeft} />}
+          {step === 2 && <Step2 qr={qr} secondsLeft={secondsLeft} status={status} />}
           {step === 3 && <Step3 name={name} num={num} />}
         </div>
 
@@ -107,9 +114,19 @@ export function BaileysWizard({ onClose, onConnect }) {
             {step > 1 && step < 3 && (
               <Button variant="ghost" onClick={() => setStep(step - 1)}>← Atrás</Button>
             )}
-            {step === 1 && <Button variant="primary" onClick={() => setStep(2)}>Generar QR →</Button>}
-            {step === 2 && <Button variant="primary" onClick={() => setStep(3)}>Ya escaneé el código →</Button>}
-            {step === 3 && <Button variant="accent" onClick={finish}>Finalizar</Button>}
+            {step === 1 && (
+              <Button variant="primary" onClick={generateQR} disabled={createMutation.isPending}>
+                {createMutation.isPending ? "Iniciando…" : "Generar QR →"}
+              </Button>
+            )}
+            {step === 2 && (
+              <Button variant="ghost" disabled>
+                Esperando vinculación…
+              </Button>
+            )}
+            {step === 3 && (
+              <Button variant="accent" onClick={finish}>Finalizar</Button>
+            )}
           </div>
         </div>
       </div>
@@ -143,11 +160,17 @@ function Step1({ name, setName, num, setNum }) {
   );
 }
 
-function Step2({ seed, setSeed, secondsLeft }) {
+function Step2({ qr, secondsLeft, status }) {
   return (
     <div className="anim-fade-in grid items-center gap-6" style={{ gridTemplateColumns: "240px 1fr" }}>
-      <div className="relative p-2" style={{ border: "1px solid var(--border-strong)", background: "#fff" }}>
-        <FakeQR seed={seed} size={240} />
+      <div className="relative p-2" style={{ border: "1px solid var(--border-strong)", background: "#fff", width: 240, height: 240 }}>
+        {qr ? (
+          <img src={qr} alt="QR de WhatsApp" style={{ width: "100%", height: "100%", display: "block" }} />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <span className="spin inline-block text-muted"><I.refresh size={32} /></span>
+          </div>
+        )}
         <div className="absolute flex items-center justify-center pointer-events-none" style={{ inset: 8 }}>
           <div
             className="flex items-center justify-center"
@@ -184,14 +207,15 @@ function Step2({ seed, setSeed, secondsLeft }) {
         >
           <span className="spin inline-block"><I.refresh size={14} /></span>
           <div className="flex-1">
-            <div className="text-xs font-semibold">Esperando vinculación…</div>
+            <div className="text-xs font-semibold">
+              {qr ? "Esperando vinculación…" : "Generando QR…"}
+            </div>
             <div className="mono text-[11px] text-muted mt-0.5">
-              El QR se renueva en {String(secondsLeft).padStart(2, "0")}s
+              {qr
+                ? `El QR se renueva en ${String(secondsLeft).padStart(2, "0")}s · estado: ${status}`
+                : "Conectando con WhatsApp…"}
             </div>
           </div>
-          <Button size="sm" variant="ghost" onClick={() => setSeed(Math.floor(Math.random() * 9999))}>
-            Regenerar
-          </Button>
         </div>
       </div>
     </div>
@@ -211,8 +235,7 @@ function Step3({ name, num }) {
         Sesión vinculada correctamente
       </h3>
       <p className="m-0 text-muted text-[13px]" style={{ maxWidth: 380 }}>
-        Tu número {num || "+51 9XX XXX XXX"} ya puede enviar mensajes. Mantén el teléfono encendido durante las
-        campañas.
+        Tu número {num || "—"} ya puede enviar mensajes. Mantén el teléfono encendido durante las campañas.
       </p>
       <div
         className="grid bg-surface-2"
@@ -224,7 +247,7 @@ function Step3({ name, num }) {
           border: "1px solid var(--border)",
         }}
       >
-        <Cell k="Número" v={<span className="mono">{num || "+51 9XX XXX XXX"}</span>} />
+        <Cell k="Número" v={<span className="mono">{num || "—"}</span>} />
         <Cell k="Dispositivo" v={name} />
         <Cell k="Calidad" v="Alta" />
       </div>

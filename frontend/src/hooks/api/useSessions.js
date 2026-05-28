@@ -14,6 +14,16 @@ export function useSessions() {
   });
 }
 
+// POST /api/sessions — crea la entrada en DB y arranca Baileys.
+// El QR llega vía Socket.IO en el canal `session:<slug>` poco después.
+export function useCreateSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body = {}) => api.post("/api/sessions", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 export function useAssignSession() {
   const qc = useQueryClient();
   return useMutation({
