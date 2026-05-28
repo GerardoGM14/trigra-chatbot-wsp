@@ -22,7 +22,7 @@ REST API + WebSockets + send queue for the WSP Control platform. It currently ru
 | Auth | **JWT + bcrypt** | Signed tokens, hashed passwords |
 | Validation | **Zod 3** | Runtime schemas + inferred TS types |
 | Logger | **Pino 9** | Structured JSON, fast |
-| WhatsApp | **Baileys** (planned) | Multi-session WhatsApp Web connection |
+| WhatsApp | **Baileys** | Multi-session WhatsApp Web (QR via Socket.IO, send via BullMQ worker) |
 
 ---
 
@@ -260,15 +260,68 @@ Apps coexist sharing Postgres (one database per app) and Redis (each app uses it
 
 ---
 
-## Baileys integration status
+## Baileys integration
 
-The `src/baileys/` module is scaffolded but **does NOT connect to WhatsApp yet**. Its functions throw `"Not implemented yet"` when called. This is intentional — Baileys is the most fragile piece of the stack (WhatsApp changes protocols without notice, risk of number bans) and we want the rest of the backend solid before integrating it.
+The `src/baileys/` module connects each `BaileysSession` row in Postgres to a
+live WhatsApp socket via the `baileys` package.
 
-When activated:
-- Each `BaileysSession` keeps its own WSP socket in the Node process
-- Credentials (`creds.json`) live in `BAILEYS_AUTH_DIR/<slug>/` (outside the repo)
-- QR codes and connection events are emitted to the frontend via Socket.IO
-- The BullMQ worker calls `baileys.sendMessage()` instead of the current stub
+### Lifecycle
+
+```
+POST /api/sessions
+       │
+       ├─► DB row created (status = Reconectando)
+       └─► baileys.startSession(slug)
+                 │
+                 ├─ load creds from BAILEYS_AUTH_DIR/<slug>/  (if any)
+                 ├─ open WhatsApp socket
+                 ├─ on QR  → emit `session:<slug>`            { type:"qr", qr:<dataUrl> }
+                 ├─ on open → status = Conectado, persist phone
+                 └─ on close → reconnect or logout (depending on cause)
+```
+
+### Sending messages
+
+```
+Frontend launches a campaign
+       │
+       └─► sendQueue.add({ sendJobId, sessionId, phone, body })  (BullMQ)
+                  │
+                  └─► worker resolves session → baileys.sendMessage(slug, phone, body)
+                              │
+                              ├─ SendJob → Enviado
+                              ├─ Campaign.sent ++
+                              └─ Socket.IO `campaign:<slug>` → frontend live update
+```
+
+### Persistence
+
+- **Credentials**: `BAILEYS_AUTH_DIR/<slug>/` (excluded from git). One folder
+  per session, holds `creds.json` and pre-keys. Reboots are safe — the next
+  start reconnects without QR.
+- **Auto-resume on boot**: `resumeAllSessions()` runs in `server.ts` after the
+  HTTP listener is up. It picks every session with status `Conectado` or
+  `Reconectando` and re-opens its socket.
+- **Disconnect path**: `DELETE /api/sessions/:id` calls `unlinkSession()`
+  which logs out + removes the auth folder, so the next time the slug is used
+  WhatsApp will issue a fresh QR.
+
+### Rate limit
+
+The BullMQ worker uses a global limiter (`SEND_RATE_PER_MINUTE` env var,
+default 60) to throttle outgoing messages. Sharing one limit across all
+sessions is intentional: it protects the account ecosystem from spikes when
+multiple sessions send in parallel.
+
+### Important — Baileys is unofficial
+
+Baileys reverse-engineers the WhatsApp Web protocol. Meta does **not**
+endorse it. If they detect heavy automated patterns they may ban the number.
+Mitigations:
+- Use a dedicated phone number (not your personal one)
+- Keep `SEND_RATE_PER_MINUTE` conservative (default 60 is already aggressive)
+- Insert random pauses between messages (`SEND_PAUSE_MIN/MAX_SECONDS`)
+- For production with real customers, migrate to the official WhatsApp Cloud API.
 
 ---
 

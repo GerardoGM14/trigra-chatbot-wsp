@@ -17,7 +17,7 @@ app-chatbot/
 | Frontend | ✅ Conectado al backend — ver [`frontend/README.es.md`](frontend/README.es.md) |
 | Backend | ✅ API REST + colas + tiempo real — ver [`backend/README.es.md`](backend/README.es.md) |
 | Frontend ↔ Backend | ✅ Integrado con TanStack Query + Socket.IO |
-| Baileys (WhatsApp) | ⏳ Estructura lista, conexión real a WhatsApp pendiente |
+| Baileys (WhatsApp) | ✅ Conectado — QR vía Socket.IO, envío real desde worker BullMQ |
 | Firebase Hosting | ✅ Configurado — `cd frontend && npm run deploy` |
 | Despliegue VPS | ⏳ Pendiente |
 
