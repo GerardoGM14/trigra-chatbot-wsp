@@ -17,6 +17,8 @@ import { templateRoutes } from "./modules/templates/templates.routes.js";
 import { campaignRoutes } from "./modules/campaigns/campaigns.routes.js";
 import { activityRoutes } from "./modules/activity/activity.routes.js";
 import { sessionRoutes } from "./modules/sessions/sessions.routes.js";
+import { conversationRoutes } from "./modules/conversations/conversations.routes.js";
+import { flowRoutes } from "./modules/flows/flows.routes.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -64,6 +66,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     await api.register(campaignRoutes, { prefix: "/campaigns" });
     await api.register(activityRoutes, { prefix: "/activity" });
     await api.register(sessionRoutes, { prefix: "/sessions" });
+    await api.register(conversationRoutes, { prefix: "/conversations" });
+    await api.register(flowRoutes, { prefix: "/flows" });
   }, { prefix: "/api" });
 
   return app;

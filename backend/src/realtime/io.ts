@@ -30,11 +30,26 @@ export function attachRealtime(app: FastifyInstance) {
   });
 }
 
-// Helpers para emitir desde otros módulos (campaigns/sessions) sin acoplarlos
-// a Socket.IO directamente.
+// Helpers para emitir desde otros módulos (campaigns/sessions/conversations)
+// sin acoplarlos a Socket.IO directamente.
 export function emitSessionUpdate(sessionSlug: string, payload: unknown) {
   io?.emit(`session:${sessionSlug}`, payload);
 }
 export function emitCampaignProgress(campaignSlug: string, payload: unknown) {
   io?.emit(`campaign:${campaignSlug}`, payload);
+}
+
+// Eventos de bandeja: el frontend escucha `conversations` (canal único) y
+// el payload trae el tipo + la conversación afectada. Más simple que un canal
+// por conversación, suficiente mientras el panel sea de pocos operadores.
+export type ConversationEvent =
+  | { type: "message"; conversationId: string; message: unknown }
+  | { type: "handoff"; conversationId: string }
+  | { type: "status"; conversationId: string; status: string };
+
+export function emitConversationEvent(
+  type: ConversationEvent["type"],
+  payload: Record<string, unknown>,
+) {
+  io?.emit("conversations", { type, ...payload });
 }
