@@ -40,9 +40,11 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  campaigns Campaign[]          @relation("CampaignOwner")
-  sessions  SessionAssignment[]
-  activity  ActivityLog[]
+  campaigns        Campaign[]          @relation("CampaignOwner")
+  sessions         SessionAssignment[]
+  activity         ActivityLog[]
+  conversations    Conversation[]      @relation("ConvAssignedUser")
+  sentMessages     Message[]           @relation("MsgSentByUser")
 
   @@index([status])
   @@index([role])
@@ -69,8 +71,9 @@ model BaileysSession {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  assignments SessionAssignment[]
-  campaigns   Campaign[]
+  assignments   SessionAssignment[]
+  campaigns     Campaign[]
+  conversations Conversation[]
 
   @@index([status])
 }
@@ -261,6 +264,120 @@ model ActivityLog {
   @@index([createdAt])
   @@index([level])
   @@index([userId])
+}
+
+// ============ BOT: FLOWS Y NODOS ============
+// Un Flow es una conversación predefinida que dispara cuando llega un mensaje
+// que matchea su `trigger`. Cada Flow es un grafo dirigido de FlowNode.
+//
+// Triggers soportados (string libre, parseado en código):
+//   · "default"           → primer mensaje sin contexto
+//   · "keyword:hola"      → match exacto (case-insensitive)
+//   · "regex:^precio"     → match con regex
+//   · "fallback"          → cuando ningún otro flow matcheó
+
+enum NodeType {
+  message      // bot envía texto; opcionalmente avanza a `nextNodeId`
+  menu         // bot envía texto + opciones numeradas; espera respuesta
+  handoff      // marca la conversación para que la atienda un operador
+  end          // termina el flow; siguiente mensaje del cliente arranca otro
+}
+
+model Flow {
+  id        String   @id @default(cuid())
+  name      String
+  // Trigger plano — lo parsea BotEngine. Ver comentario arriba.
+  trigger   String   @default("default")
+  isActive  Boolean  @default(true)
+  // Nodo por el que arranca el flow al dispararse.
+  startNodeId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  nodes         FlowNode[]
+  conversations Conversation[]
+
+  @@index([trigger])
+  @@index([isActive])
+}
+
+model FlowNode {
+  id     String   @id @default(cuid())
+  flowId String
+  type   NodeType
+  // Texto que el bot envía (puede tener variables {{nombre}}).
+  body   String   @db.Text
+  // Para `menu`: [{label:"Ver catálogo", value:"1", nextNodeId:"..."}].
+  // Para `message`: opcionalmente { nextNodeId: "..." } para encadenar.
+  options Json?
+
+  flow Flow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@index([flowId])
+}
+
+// ============ CONVERSACIONES ============
+enum ConvStatus {
+  bot          // el bot está conduciendo la conversación
+  handed_off   // un operador tomó el control, bot deshabilitado
+  closed       // conversación cerrada manualmente
+}
+
+enum MsgDirection {
+  inbound      // del cliente hacia nosotros
+  outbound     // de nosotros (bot u operador) al cliente
+}
+
+model Conversation {
+  id           String     @id @default(cuid())
+  sessionId    String     // sesión Baileys por la que entra
+  contactPhone String     // E.164 (sin "+", como llega de Baileys)
+  contactName  String?    // si está en la libreta de WSP del operador
+  status       ConvStatus @default(bot)
+
+  // Estado del flow actual: en qué flow + en qué nodo está esperando input.
+  currentFlowId String?
+  currentNodeId String?
+
+  // Si un operador tomó el control.
+  assignedUserId String?
+
+  lastMessageAt DateTime  @default(now())
+  unreadCount   Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  session       BaileysSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  currentFlow   Flow?          @relation(fields: [currentFlowId], references: [id], onDelete: SetNull)
+  assignedUser  User?          @relation("ConvAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  messages      Message[]
+
+  // Una conversación por (sesión, número). Si el mismo contacto escribe a
+  // otra sesión, es otra conversación independiente.
+  @@unique([sessionId, contactPhone])
+  @@index([status])
+  @@index([assignedUserId])
+  @@index([lastMessageAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  direction      MsgDirection
+  body           String       @db.Text
+  // Si trae adjunto (futuro): tipo + URL del archivo en disco.
+  mediaType      String?      // "image" | "video" | "audio" | "document"
+  mediaUrl       String?
+  // ID del mensaje en WhatsApp (para deduplicar y referenciar).
+  whatsappId     String?      @unique
+  // Si lo envió un operador (no el bot), enlazamos al user.
+  sentByUserId   String?
+  createdAt      DateTime     @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sentByUser   User?        @relation("MsgSentByUser", fields: [sentByUserId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
 }
 
 // ============ POLÍTICAS GLOBALES ============

@@ -198,6 +198,80 @@ async function main() {
     console.log("  · account policy initialized");
   }
 
+  // ============ FLOW DE BIENVENIDA (default) ============
+  // Solo creamos el flow si no hay ninguno con trigger=default — así re-correr
+  // el seed no duplica.
+  const existingDefault = await prisma.flow.findFirst({ where: { trigger: "default" } });
+  if (!existingDefault) {
+    const flow = await prisma.flow.create({
+      data: {
+        name: "Bienvenida",
+        trigger: "default",
+        isActive: true,
+      },
+    });
+
+    // Nodos: menú → 3 ramas que terminan, una con handoff a operador.
+    const menuNode = await prisma.flowNode.create({
+      data: {
+        flowId: flow.id,
+        type: "menu",
+        body:
+          "¡Hola! Soy el asistente de Empresa S.A.C. ¿En qué te puedo ayudar?\n\n" +
+          "1️⃣ Ver catálogo\n" +
+          "2️⃣ Hablar con un asesor\n" +
+          "3️⃣ Consultar horarios",
+        options: [
+          { label: "Ver catálogo", value: "1" },
+          { label: "Hablar con un asesor", value: "2" },
+          { label: "Consultar horarios", value: "3" },
+        ],
+      },
+    });
+
+    const catalogNode = await prisma.flowNode.create({
+      data: {
+        flowId: flow.id,
+        type: "end",
+        body: "📦 Aquí tienes nuestro catálogo: https://empresa.pe/catalogo\n\nSi necesitas algo más, escríbenos cuando quieras.",
+      },
+    });
+    const handoffNode = await prisma.flowNode.create({
+      data: {
+        flowId: flow.id,
+        type: "handoff",
+        body: "Te conecto con un asesor humano. En un momento te responde 👤",
+      },
+    });
+    const hoursNode = await prisma.flowNode.create({
+      data: {
+        flowId: flow.id,
+        type: "end",
+        body: "🕐 Atendemos de Lunes a Sábado, 8:00 a 20:00 (UTC−5).\n\nSi tu consulta es urgente fuera de horario, igual nos escribes y te respondemos lo antes posible.",
+      },
+    });
+
+    // Conectamos las opciones del menú con sus nodos destino.
+    await prisma.flowNode.update({
+      where: { id: menuNode.id },
+      data: {
+        options: [
+          { label: "Ver catálogo", value: "1", nextNodeId: catalogNode.id },
+          { label: "Hablar con un asesor", value: "2", nextNodeId: handoffNode.id },
+          { label: "Consultar horarios", value: "3", nextNodeId: hoursNode.id },
+        ],
+      },
+    });
+
+    // El startNode del flow es el menú.
+    await prisma.flow.update({
+      where: { id: flow.id },
+      data: { startNodeId: menuNode.id },
+    });
+
+    console.log("  · default welcome flow created (1 menu + 3 leaves)");
+  }
+
   console.log("✓ seed complete");
 }
 
