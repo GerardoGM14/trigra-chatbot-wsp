@@ -26,6 +26,7 @@ import pino from "pino";
 import { env } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
 import { emitSessionUpdate } from "../realtime/io.js";
+import { handleIncomingMessage } from "./messageHandler.js";
 
 // Logger silencioso para Baileys — la librería loguea muchísimo por defecto.
 const baileysLogger = pino({ level: "warn" });
@@ -86,6 +87,22 @@ export async function startSession(slug: string): Promise<void> {
   // Persistir credenciales cada vez que cambian — sin esto, al reiniciar
   // el proceso habría que reescanear QR.
   sock.ev.on("creds.update", saveCreds);
+
+  // Mensajes entrantes — pasamos a messageHandler, que decide si el bot
+  // responde según el flow activo. Inyectamos `sendMessage` para evitar
+  // ciclo de imports.
+  sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    // Solo procesamos mensajes nuevos (no historial sync).
+    if (type !== "notify") return;
+    for (const m of messages) {
+      handleIncomingMessage({
+        sessionSlug: slug,
+        message: m,
+        log: baileysLogger,
+        send: sendMessage,
+      }).catch((err) => baileysLogger.error({ err, slug }, "messageHandler failed"));
+    }
+  });
 
   sock.ev.on("connection.update", async (update) => {
     const { connection, qr, lastDisconnect } = update;
