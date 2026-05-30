@@ -30,8 +30,19 @@ export function useRealtimeUpdates() {
     };
     socket.onAny(onAny);
 
+    // Canal de bandeja: cualquier mensaje nuevo o cambio de estado refresca
+    // la lista + el detalle de la conversación afectada.
+    const onConversations = (payload) => {
+      qc.invalidateQueries({ queryKey: ["conversations"] });
+      if (payload?.conversationId) {
+        qc.invalidateQueries({ queryKey: ["conversations", payload.conversationId] });
+      }
+    };
+    socket.on("conversations", onConversations);
+
     return () => {
       socket.offAny(onAny);
+      socket.off("conversations", onConversations);
       disconnectSocket();
     };
   }, [qc]);
