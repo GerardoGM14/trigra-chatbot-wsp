@@ -5,4 +5,5 @@ export { UserContacts } from "./UserContacts.jsx";
 export { UserTemplates } from "./UserTemplates.jsx";
 export { UserSchedule } from "./UserSchedule.jsx";
 export { UserReports } from "./UserReports.jsx";
+export { UserInbox } from "./UserInbox.jsx";
 export { CampaignsRoute } from "./CampaignsRoute.jsx";
