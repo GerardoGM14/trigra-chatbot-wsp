@@ -18,6 +18,7 @@ app-chatbot/
 | Backend | ✅ REST API + queues + realtime — see [`backend/README.md`](backend/README.md) |
 | Frontend ↔ Backend | ✅ Wired up via TanStack Query + Socket.IO |
 | Baileys (WhatsApp) | ✅ Connected — QR via Socket.IO, real send through BullMQ worker |
+| Auto-reply bot | ✅ Menu flows + handoff to human · inbox UI for operators |
 | Firebase Hosting | ✅ Configured — `cd frontend && npm run deploy` |
 | VPS deployment | ⏳ Pending |
 

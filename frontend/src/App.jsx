@@ -11,9 +11,10 @@ import { useRealtimeUpdates } from "./hooks/useRealtimeUpdates.js";
 import { Shell } from "./components/shell";
 import { ThemePicker } from "./components/ThemePicker.jsx";
 import { LoginScreen } from "./screens/auth/LoginScreen.jsx";
-import { AdminOverview, AdminUsers, AdminActivity, AdminSettings } from "./screens/admin";
+import { AdminOverview, AdminUsers, AdminActivity, AdminSettings, AdminFlows } from "./screens/admin";
 import {
   UserSessions,
+  UserInbox,
   CampaignsRoute,
   UserContacts,
   UserTemplates,
@@ -71,6 +72,7 @@ function AppRoutes() {
       >
         <Route index element={<AdminOverview />} />
         <Route path="users" element={<AdminUsers />} />
+        <Route path="flows" element={<AdminFlows />} />
         <Route path="activity" element={<AdminActivity />} />
         <Route path="settings" element={<AdminSettings />} />
       </Route>
@@ -84,6 +86,7 @@ function AppRoutes() {
         }
       >
         <Route index element={<UserSessions />} />
+        <Route path="inbox" element={<UserInbox />} />
         <Route path="campaigns" element={<CampaignsRoute />} />
         <Route path="contacts" element={<UserContacts />} />
         <Route path="templates" element={<UserTemplates />} />
